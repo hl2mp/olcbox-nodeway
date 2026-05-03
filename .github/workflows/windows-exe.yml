@@ -219,18 +219,12 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install github.com/magefile/mage@latest
 
-      - name: Build olcRTC Android AAR
+      - name: Initialize gomobile
         working-directory: olcrtc
         run: |
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           gomobile init
-          mage mobile
-          mkdir -p ../olcbox/androidApp/jniLibs/arm64-v8a
-          cp build/olcrtc.aar ../olcbox/androidApp/jniLibs/arm64-v8a/olcrtc.aar
-          if [ -f build/olcrtc-sources.jar ]; then
-            cp build/olcrtc-sources.jar ../olcbox/androidApp/jniLibs/arm64-v8a/olcrtc-sources.jar
-          fi
 
       - name: Configure Android release signing
         working-directory: olcbox
@@ -255,6 +249,9 @@ jobs:
       - name: Build production APK
         working-directory: olcbox
         run: |
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew :sharedUI:jvmTest :androidApp:assembleRelease --stacktrace
 
       - name: Prepare Android release assets
