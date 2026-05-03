@@ -65,6 +65,26 @@
             </intent-filter>
         </service>
 
+        <!--
+            Quick Settings tile — allows the user to toggle the VPN directly
+            from the notification shade without opening the app.
+            Requires Android 7.0+ (API 24). The tile must be added manually by
+            the user via "Edit" in the Quick Settings panel.
+        -->
+        <service
+            android:name=".QuickSettingsTileService"
+            android:label="@string/qs_tile_label"
+            android:icon="@mipmap/ic_qs_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
     </application>
 
 </manifest>
