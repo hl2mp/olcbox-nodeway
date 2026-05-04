@@ -3,8 +3,9 @@ package org.turnbox.app.data.datasource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import org.turnbox.app.data.LEGACY_LOCATIONS_BUNDLE_FILE_NAME
 import org.turnbox.app.data.LOCATIONS_BUNDLE_FILE_NAME
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.desktop.DesktopPaths
 import java.nio.file.Files
 import java.nio.file.Path
@@ -19,24 +20,29 @@ class JvmLocationsDataSourceImpl(
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        explicitNulls = false
         prettyPrint = true
     }
 
     private val bundleFile: Path
         get() = appDir.resolve(LOCATIONS_BUNDLE_FILE_NAME)
 
-    override suspend fun loadLocationBundle(): LocationBundleV3? = withContext(Dispatchers.IO) {
-        val file = bundleFile
+    private val legacyBundleFile: Path
+        get() = appDir.resolve(LEGACY_LOCATIONS_BUNDLE_FILE_NAME)
+
+    override suspend fun loadLocationBundle(): LocationBundleV4? = withContext(Dispatchers.IO) {
+        val file = bundleFile.takeIf { it.exists() } ?: legacyBundleFile.takeIf { it.exists() }
+            ?: return@withContext null
         if (!file.exists()) return@withContext null
         runCatching {
-            json.decodeFromString(LocationBundleV3.serializer(), file.readText()).normalized()
+            json.decodeFromString(LocationBundleV4.serializer(), file.readText()).normalized()
         }.getOrNull()
     }
 
-    override suspend fun saveLocationBundle(bundle: LocationBundleV3): Unit = withContext(Dispatchers.IO) {
+    override suspend fun saveLocationBundle(bundle: LocationBundleV4): Unit = withContext(Dispatchers.IO) {
         Files.createDirectories(appDir)
         bundleFile.writeText(
-            json.encodeToString(LocationBundleV3.serializer(), bundle.normalized())
+            json.encodeToString(LocationBundleV4.serializer(), bundle.normalized())
         )
     }
 

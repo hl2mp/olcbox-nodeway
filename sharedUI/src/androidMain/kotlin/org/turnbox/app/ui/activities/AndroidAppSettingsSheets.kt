@@ -3,8 +3,14 @@ package org.turnbox.app.ui.activities
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -75,6 +81,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import org.turnbox.app.ui.features.home.components.LogLines
 import org.turnbox.app.vpn.AndroidConnectionMode
 import org.turnbox.app.vpn.AndroidInstalledApp
 import org.turnbox.app.vpn.AndroidSocksProxySettings
@@ -89,10 +96,11 @@ internal fun AppSettingsSheet(
     proxySettings: AndroidSocksProxySettings,
     splitTunnelSettings: AndroidSplitTunnelSettings,
     installedApps: List<AndroidInstalledApp>,
+    logs: List<String>,
     enabled: Boolean,
     isConnectionActive: Boolean,
     onDismiss: () -> Unit,
-    onApplicationLogsClick: () -> Unit,
+    onSaveLogsClick: () -> Unit,
     onModeSelected: (AndroidConnectionMode) -> Unit,
     onProxySettingsSaved: (String, String) -> Unit,
     onProxyPasswordRegenerated: () -> Unit,
@@ -117,6 +125,17 @@ internal fun AppSettingsSheet(
         }
     }
 
+    BackHandler {
+        route = when (route) {
+            AppSettingsRoute.Hub -> {
+                closeSheet()
+                AppSettingsRoute.Hub
+            }
+            is AppSettingsRoute.AppList -> AppSettingsRoute.SplitTunneling
+            else -> AppSettingsRoute.Hub
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = { closeSheet() },
         sheetState = sheetState,
@@ -126,12 +145,30 @@ internal fun AppSettingsSheet(
         AnimatedContent(
             targetState = route,
             transitionSpec = {
-                val forward = targetState.depth > initialState.depth
-                val enterOffset: (Int) -> Int = { width -> if (forward) width / 3 else -width / 3 }
-                val exitOffset: (Int) -> Int = { width -> if (forward) -width / 3 else width / 3 }
-
-                (slideInHorizontally(initialOffsetX = enterOffset) + fadeIn())
-                    .togetherWith(slideOutHorizontally(targetOffsetX = exitOffset) + fadeOut())
+                fadeIn(
+                    animationSpec = tween(
+                        durationMillis = 180,
+                        delayMillis = 60,
+                        easing = LinearOutSlowInEasing
+                    )
+                ).togetherWith(
+                    fadeOut(
+                        animationSpec = tween(
+                            durationMillis = 90,
+                            easing = FastOutLinearInEasing
+                        )
+                    )
+                ).using(
+                    SizeTransform(
+                        clip = false,
+                        sizeAnimationSpec = { _, _ ->
+                            tween(
+                                durationMillis = 320,
+                                easing = FastOutSlowInEasing
+                            )
+                        }
+                    )
+                )
             },
             label = "appSettingsRoute"
         ) { currentRoute ->
@@ -144,7 +181,7 @@ internal fun AppSettingsSheet(
                     onConnectionModeClick = { route = AppSettingsRoute.ConnectionMode },
                     onProxySettingsClick = { route = AppSettingsRoute.SocksProxy },
                     onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling },
-                    onApplicationLogsClick = { closeSheet(onApplicationLogsClick) }
+                    onApplicationLogsClick = { route = AppSettingsRoute.ApplicationLogs }
                 )
 
                 AppSettingsRoute.ConnectionMode -> ConnectionModeSettingsContent(
@@ -180,6 +217,12 @@ internal fun AppSettingsSheet(
                     enabled = enabled,
                     onBack = { route = AppSettingsRoute.SplitTunneling },
                     onAppToggled = onSplitTunnelAppToggled
+                )
+
+                AppSettingsRoute.ApplicationLogs -> ApplicationLogsSettingsContent(
+                    logs = logs,
+                    onBack = { route = AppSettingsRoute.Hub },
+                    onSaveClick = onSaveLogsClick
                 )
             }
         }
@@ -489,6 +532,54 @@ private fun SplitTunnelingAppListContent(
 }
 
 @Composable
+private fun ApplicationLogsSettingsContent(
+    logs: List<String>,
+    onBack: () -> Unit,
+    onSaveClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.82f)
+            .padding(horizontal = 24.dp)
+            .padding(top = 16.dp, bottom = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SettingsDetailHeader(
+                title = "Application Logs",
+                subtitle = if (logs.isEmpty()) "No entries" else "${logs.size} entries",
+                onBack = onBack,
+                modifier = Modifier.weight(1f)
+            )
+
+            TextButton(
+                enabled = logs.isNotEmpty(),
+                onClick = onSaveClick
+            ) {
+                Text("Save")
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            LogLines(
+                logs = logs,
+                modifier = Modifier.fillMaxHeight(),
+                contentPadding = PaddingValues(14.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun SettingsNavigationRow(
     title: String,
     value: String,
@@ -583,9 +674,13 @@ private fun SettingsSheetHeader(
 private fun SettingsDetailHeader(
     title: String,
     subtitle: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Surface(
             modifier = Modifier.size(46.dp),
             shape = CircleShape,
@@ -1275,6 +1370,7 @@ private sealed class AppSettingsRoute(val depth: Int) {
     object ConnectionMode : AppSettingsRoute(1)
     object SocksProxy : AppSettingsRoute(1)
     object SplitTunneling : AppSettingsRoute(1)
+    object ApplicationLogs : AppSettingsRoute(1)
     data class AppList(val list: AndroidSplitTunnelList) : AppSettingsRoute(2)
 }
 

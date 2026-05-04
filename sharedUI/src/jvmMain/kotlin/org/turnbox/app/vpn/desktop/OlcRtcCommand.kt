@@ -13,7 +13,7 @@ internal data class OlcRtcCommand(
     fun args(): List<String> {
         val config = location.normalized()
         val provider = desktopProviderArg(config.bypassProvider)
-        return listOfNotNull(
+        val baseArgs = listOf(
             binary.toString(),
             "-mode", "cnc",
             "-link", "direct",
@@ -23,10 +23,16 @@ internal data class OlcRtcCommand(
             "-key", config.key,
             "-socks-host", socksHost,
             "-socks-port", socksPort.toString(),
-            "-dns", "1.1.1.1:53",
-            "-vp8-fps", config.vp8Fps.toString(),
-            "-vp8-batch", config.vp8Batch.toString()
-        ) + listOfNotNull(
+            "-dns", "1.1.1.1:53"
+        )
+        val transportArgs = when (config.transport) {
+            LocationConfig.TRANSPORT_VP8CHANNEL -> listOf(
+                "-vp8-fps", config.vp8Fps.toString(),
+                "-vp8-batch", config.vp8Batch.toString()
+            )
+            else -> emptyList()
+        }
+        return baseArgs + transportArgs + listOfNotNull(
             dataDir?.let { "-data" },
             dataDir?.toString()
         )

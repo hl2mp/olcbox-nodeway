@@ -1,5 +1,8 @@
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -15,6 +18,7 @@ import org.turnbox.app.data.importer.JvmConfigImporter
 import org.turnbox.app.ui.TurnboxAppContent
 import org.turnbox.app.ui.features.home.HomeScreenViewModel
 import org.turnbox.app.ui.features.locations.LocationViewModel
+import org.turnbox.app.ui.navigation.AppScreen
 import org.turnbox.app.ui.theme.AppTheme
 import org.turnbox.app.vpn.DesktopVpnManager
 
@@ -22,12 +26,14 @@ private class DesktopAppDependencies {
     private val locationsDataSource = JvmLocationsDataSourceImpl()
     val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
     val vpnManager = DesktopVpnManager(locationsRepository)
+
     val homeViewModel = HomeScreenViewModel(
         vpnManager = vpnManager,
         locationsRepository = locationsRepository,
         configImporter = JvmConfigImporter(),
         logExporter = JvmLogExporter()
     )
+
     val locationViewModel = LocationViewModel(locationsRepository)
 
     fun close() {
@@ -37,6 +43,7 @@ private class DesktopAppDependencies {
 
 fun main() = application {
     val dependencies = remember { DesktopAppDependencies() }
+    var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Home) }
 
     Window(
         title = "Turnbox",
@@ -47,6 +54,7 @@ fun main() = application {
         },
     ) {
         window.minimumSize = Dimension(350, 600)
+
         DisposableEffect(Unit) {
             onDispose { dependencies.close() }
         }
@@ -55,6 +63,13 @@ fun main() = application {
             TurnboxAppContent(
                 homeViewModel = dependencies.homeViewModel,
                 locationViewModel = dependencies.locationViewModel,
+                currentScreen = currentScreen,
+                onNavigate = { screen ->
+                    currentScreen = screen
+                },
+                onToggleClick = {
+                    dependencies.homeViewModel.ToggleVpn()
+                },
                 onImportFileRequested = {
                     chooseConfigFile(window)?.let { file ->
                         dependencies.homeViewModel.onFileSelected(file) {
@@ -63,17 +78,35 @@ fun main() = application {
                         }
                     }
                 },
-                onSaveLogsRequested = { onSaved, onError ->
-                    chooseSaveFile(window, dependencies.homeViewModel.suggestedLogsFileName())?.let { file ->
-                        dependencies.homeViewModel.onSaveLogsToFile(file, onSaved, onError)
+                onImportFromClipboardRequested = {
+                    dependencies.homeViewModel.onPasteFromClipboard {
+                        dependencies.locationViewModel.loadLocations()
+                        dependencies.homeViewModel.loadCurrentConfig()
                     }
-                }
+                },
+                onCopyConfigRequested = {
+                    dependencies.homeViewModel.onCopyFullConfigClicked()
+                },
+                onSaveLogsRequested = { onSaved, onError ->
+                    chooseSaveFile(
+                        owner = window,
+                        defaultName = dependencies.homeViewModel.suggestedLogsFileName()
+                    )?.let { file ->
+                        dependencies.homeViewModel.onSaveLogsToFile(
+                            target = file,
+                            onSaved = onSaved,
+                            onError = onError
+                        )
+                    }
+                },
+                showAppSettingsButton = false,
+                onAppSettingsClick = {}
             )
         }
     }
 }
 
-private fun chooseConfigFile(owner: Frame): java.io.File? {
+private fun chooseConfigFile(owner: Frame): File? {
     val dialog = FileDialog(owner, "Import Turnbox Config", FileDialog.LOAD)
     dialog.isVisible = true
     return dialog.files.firstOrNull()

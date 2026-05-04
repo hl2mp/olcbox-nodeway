@@ -77,14 +77,6 @@ fun LogsContent(
     onSaveClick: () -> Unit,
     onCloseClick: () -> Unit
 ) {
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
-            listState.scrollToItem(logs.lastIndex)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -128,23 +120,44 @@ fun LogsContent(
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.Black.copy(alpha = 0.05f))
         ) {
-            LazyColumn(
-                state = listState,
+            LogLines(
+                logs = logs,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(12.dp)
-            ) {
-                itemsIndexed(
-                    items = logs,
-                    key = { index, log -> "$index:$log" }
-                ) { _, log ->
-                    Text(
-                        text = log,
-                        fontSize = 12.sp,
-                        color = getLogColor(log),
-                        modifier = Modifier.padding(vertical = 2.dp)
-                    )
-                }
-            }
+            )
+        }
+    }
+}
+
+@Composable
+fun LogLines(
+    logs: List<String>,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp)
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            listState.scrollToItem(logs.lastIndex)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = contentPadding
+    ) {
+        itemsIndexed(
+            items = logs,
+            key = { index, log -> "$index:$log" }
+        ) { _, log ->
+            Text(
+                text = log,
+                fontSize = 12.sp,
+                color = getLogColor(log),
+                modifier = Modifier.padding(vertical = 2.dp)
+            )
         }
     }
 }

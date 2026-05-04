@@ -1,7 +1,7 @@
 package org.turnbox.app.data.datasource
 
 import kotlinx.coroutines.test.runTest
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.data.model.LocationConfig
 import org.turnbox.app.data.model.LocationEntry
 import kotlin.test.Test
@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 class LocationsRepositoryImplTest {
 
     @Test
-    fun exportsAndImportsBundleV3WithActiveLocation() = runTest {
+    fun exportsAndImportsBundleV4WithActiveLocation() = runTest {
         val first = LocationEntry.from(
             "amsterdam",
             LocationConfig("Amsterdam", "room-a", "key-a", LocationConfig.PROVIDER_JAZZ)
@@ -23,19 +23,23 @@ class LocationsRepositoryImplTest {
             LocationConfig("Berlin", "room-b", "key-b", LocationConfig.PROVIDER_TELEMOST)
         )
         val source = FakeLocationsDataSource(
-            stored = LocationBundleV3(
+            stored = LocationBundleV4(
                 activeLocationId = "berlin",
                 locations = listOf(first, second)
             )
         )
         val exported = LocationsRepositoryImpl(source).exportBundle()
+        assertTrue("\"version\": 4" in exported)
+        assertTrue("\"endpoint\"" in exported)
+        assertTrue("\"carrier\"" in exported)
+        assertTrue("\"bypass_provider\"" !in exported)
         val importedSource = FakeLocationsDataSource()
 
         LocationsRepositoryImpl(importedSource).importText(exported)
 
         val imported = importedSource.stored
         assertNotNull(imported)
-        assertEquals(3, imported.version)
+        assertEquals(4, imported.version)
         assertEquals("berlin", imported.activeLocationId)
         assertEquals(listOf("amsterdam", "berlin"), imported.locations.map { it.storageId })
         assertEquals(
@@ -64,15 +68,15 @@ class LocationsRepositoryImplTest {
     @Test
     fun normalizesStoredWbStreamAliasToCanonicalProvider() = runTest {
         val source = FakeLocationsDataSource(
-            stored = LocationBundleV3(
+            stored = LocationBundleV4(
                 activeLocationId = "wb",
                 locations = listOf(
                     LocationEntry(
                         storageId = "wb",
                         name = "WB",
-                        id = "room-wb",
-                        key = "key-wb",
-                        bypassProvider = "wbstream"
+                        legacyId = "room-wb",
+                        legacyKey = "key-wb",
+                        legacyBypassProvider = "wbstream"
                     )
                 )
             )
@@ -188,15 +192,72 @@ class LocationsRepositoryImplTest {
         assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, imported.locations[1].location.transport)
     }
 
+    @Test
+    fun importsUnsupportedVideochannelAsDefaultTransport() = runTest {
+        val source = FakeLocationsDataSource()
+        val input = """
+            {
+              "version": 4,
+              "active_location_id": "telemost-video",
+              "locations": [
+                {
+                  "storage_id": "telemost-video",
+                  "name": "Telemost Video",
+                  "endpoint": {
+                    "room_id": "75047680642749",
+                    "key": "${"c".repeat(64)}"
+                  },
+                  "carrier": "telemost",
+                  "transport": {
+                    "type": "videochannel"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        val location = imported.locations.first().location
+        assertEquals(4, imported.version)
+        assertEquals(LocationConfig.PROVIDER_TELEMOST, location.bypassProvider)
+        assertEquals(LocationConfig.TRANSPORT_VP8CHANNEL, location.transport)
+    }
+
+    @Test
+    fun exposesAllWorkingCarrierTransportPairs() {
+        assertEquals(
+            listOf(
+                LocationConfig.TRANSPORT_VP8CHANNEL,
+                LocationConfig.TRANSPORT_SEICHANNEL
+            ),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_TELEMOST)
+        )
+        assertEquals(
+            listOf(
+                LocationConfig.TRANSPORT_DATACHANNEL,
+                LocationConfig.TRANSPORT_VP8CHANNEL,
+                LocationConfig.TRANSPORT_SEICHANNEL
+            ),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ)
+        )
+        assertEquals(
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_WB_STREAM)
+        )
+    }
+
     private class FakeLocationsDataSource(
-        var stored: LocationBundleV3? = null,
+        var stored: LocationBundleV4? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),
         private val legacyActive: String? = null
     ) : LocationsDataSource {
 
-        override suspend fun loadLocationBundle(): LocationBundleV3? = stored
+        override suspend fun loadLocationBundle(): LocationBundleV4? = stored
 
-        override suspend fun saveLocationBundle(bundle: LocationBundleV3) {
+        override suspend fun saveLocationBundle(bundle: LocationBundleV4) {
             stored = bundle
         }
 

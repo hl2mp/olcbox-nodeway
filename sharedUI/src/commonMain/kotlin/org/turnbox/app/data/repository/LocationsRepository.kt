@@ -1,12 +1,12 @@
 package org.turnbox.app.data.repository
 
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.data.model.LocationConfig
 import org.turnbox.app.data.model.LocationEntry
 
 interface LocationsRepository {
-    suspend fun getBundle(): LocationBundleV3
-    suspend fun saveBundle(bundle: LocationBundleV3)
+    suspend fun getBundle(): LocationBundleV4
+    suspend fun saveBundle(bundle: LocationBundleV4)
     suspend fun exportBundle(): String
     suspend fun importText(text: String)
     suspend fun saveLocation(storageId: String, location: LocationConfig)

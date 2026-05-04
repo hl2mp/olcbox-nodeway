@@ -1,7 +1,7 @@
 package org.turnbox.app.data.datasource
 
 import kotlinx.coroutines.test.runTest
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.data.model.LocationConfig
 import org.turnbox.app.data.model.LocationEntry
 import java.nio.file.Files
@@ -15,7 +15,7 @@ class JvmLocationsDataSourceImplTest {
     fun storesLocationBundleInProvidedDirectory() = runTest {
         val dir = Files.createTempDirectory("turnbox-locations-test")
         val source = JvmLocationsDataSourceImpl(dir)
-        val bundle = LocationBundleV3(
+        val bundle = LocationBundleV4(
             activeLocationId = "desk",
             locations = listOf(
                 LocationEntry.from(

@@ -1,7 +1,18 @@
 package org.turnbox.app.data.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 
 @Serializable
 data class LocationConfig(
@@ -18,12 +29,13 @@ data class LocationConfig(
 ) {
     fun normalized(): LocationConfig {
         val provider = normalizeProvider(bypassProvider)
+        val normalizedTransport = normalizeTransport(transport, provider)
         return copy(
             name = name.trim(),
             id = id.trim(),
             key = key.trim(),
             bypassProvider = provider,
-            transport = normalizeTransport(transport, provider),
+            transport = normalizedTransport,
             vp8Fps = sanitizeVp8Fps(vp8Fps),
             vp8Batch = sanitizeVp8Batch(vp8Batch)
         )
@@ -42,11 +54,14 @@ data class LocationConfig(
         const val PROVIDER_TELEMOST = "telemost"
         const val PROVIDER_WB_STREAM = "wbstream"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
+
         const val TRANSPORT_DATACHANNEL = "datachannel"
         const val TRANSPORT_VP8CHANNEL = "vp8channel"
+        const val TRANSPORT_SEICHANNEL = "seichannel"
         const val DEFAULT_TRANSPORT = TRANSPORT_VP8CHANNEL
+
         const val DEFAULT_VP8_FPS = 60
-        const val DEFAULT_VP8_BATCH = 8
+        const val DEFAULT_VP8_BATCH = 64
 
         val supportedBypassProviders = listOf(
             PROVIDER_JAZZ,
@@ -55,13 +70,14 @@ data class LocationConfig(
         )
 
         val supportedTransports = listOf(
+            TRANSPORT_DATACHANNEL,
             TRANSPORT_VP8CHANNEL,
-            TRANSPORT_DATACHANNEL
+            TRANSPORT_SEICHANNEL
         )
 
         fun supportedTransportsForProvider(provider: String): List<String> {
             return when (normalizeProvider(provider)) {
-                PROVIDER_TELEMOST -> listOf(TRANSPORT_VP8CHANNEL)
+                PROVIDER_TELEMOST -> listOf(TRANSPORT_VP8CHANNEL, TRANSPORT_SEICHANNEL)
                 else -> supportedTransports
             }
         }
@@ -79,6 +95,7 @@ data class LocationConfig(
             val normalized = when (value.trim().lowercase()) {
                 TRANSPORT_DATACHANNEL, "data", "dc" -> TRANSPORT_DATACHANNEL
                 TRANSPORT_VP8CHANNEL, "vp8", "video_vp8", "video-vp8" -> TRANSPORT_VP8CHANNEL
+                TRANSPORT_SEICHANNEL, "sei", "sei_channel", "sei-channel", "h264_sei" -> TRANSPORT_SEICHANNEL
                 else -> DEFAULT_TRANSPORT
             }
             return normalized.takeIf { it in supportedTransportsForProvider(provider) }
@@ -96,17 +113,10 @@ data class LocationConfig(
 
         fun transportDisplayName(transport: String): String {
             return when (normalizeTransport(transport)) {
+                TRANSPORT_DATACHANNEL -> "DataChannel"
                 TRANSPORT_VP8CHANNEL -> "VP8"
-                TRANSPORT_DATACHANNEL -> "Data"
+                TRANSPORT_SEICHANNEL -> "SEI"
                 else -> "VP8"
-            }
-        }
-
-        fun transportDescription(transport: String): String {
-            return when (normalizeTransport(transport)) {
-                TRANSPORT_VP8CHANNEL -> "Media tunnel"
-                TRANSPORT_DATACHANNEL -> "WebRTC data"
-                else -> "Media tunnel"
             }
         }
 
@@ -117,42 +127,183 @@ data class LocationConfig(
 }
 
 @Serializable
+data class Vp8TransportConfig(
+    val fps: Int = LocationConfig.DEFAULT_VP8_FPS,
+    val batch: Int = LocationConfig.DEFAULT_VP8_BATCH
+) {
+    fun normalized(): Vp8TransportConfig {
+        return copy(
+            fps = LocationConfig.sanitizeVp8Fps(fps),
+            batch = LocationConfig.sanitizeVp8Batch(batch)
+        )
+    }
+
+    companion object {
+        fun from(config: LocationConfig): Vp8TransportConfig {
+            return Vp8TransportConfig(config.vp8Fps, config.vp8Batch).normalized()
+        }
+    }
+}
+
+@Serializable(with = LocationTransportConfigSerializer::class)
+data class LocationTransportConfig(
+    val type: String = LocationConfig.DEFAULT_TRANSPORT,
+    val vp8: Vp8TransportConfig? = null
+) {
+    fun normalized(provider: String): LocationTransportConfig {
+        val normalizedType = LocationConfig.normalizeTransport(type, provider)
+        return copy(
+            type = normalizedType,
+            vp8 = if (normalizedType == LocationConfig.TRANSPORT_VP8CHANNEL) {
+                (vp8 ?: Vp8TransportConfig()).normalized()
+            } else {
+                null
+            }
+        )
+    }
+
+    companion object {
+        fun from(config: LocationConfig): LocationTransportConfig {
+            val normalized = config.normalized()
+            return LocationTransportConfig(
+                type = normalized.transport,
+                vp8 = if (normalized.transport == LocationConfig.TRANSPORT_VP8CHANNEL) {
+                    Vp8TransportConfig.from(normalized)
+                } else {
+                    null
+                }
+            )
+        }
+    }
+}
+
+@Serializable
+private data class LocationTransportConfigSurrogate(
+    val type: String = LocationConfig.DEFAULT_TRANSPORT,
+    val vp8: Vp8TransportConfig? = null
+)
+
+object LocationTransportConfigSerializer : KSerializer<LocationTransportConfig> {
+    override val descriptor: SerialDescriptor = LocationTransportConfigSurrogate.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): LocationTransportConfig {
+        val jsonDecoder = decoder as? JsonDecoder ?: return LocationTransportConfig()
+        return when (val element = jsonDecoder.decodeJsonElement()) {
+            is JsonPrimitive -> LocationTransportConfig(type = element.contentOrNull.orEmpty())
+            is JsonObject -> {
+                val surrogate = jsonDecoder.json.decodeFromJsonElement(
+                    LocationTransportConfigSurrogate.serializer(),
+                    element
+                )
+                LocationTransportConfig(
+                    type = surrogate.type,
+                    vp8 = surrogate.vp8
+                )
+            }
+            else -> LocationTransportConfig()
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: LocationTransportConfig) {
+        val jsonEncoder = encoder as? JsonEncoder
+        val surrogate = LocationTransportConfigSurrogate(
+            type = value.type,
+            vp8 = value.vp8
+        )
+        if (jsonEncoder != null) {
+            jsonEncoder.encodeJsonElement(
+                jsonEncoder.json.encodeToJsonElement(
+                    LocationTransportConfigSurrogate.serializer(),
+                    surrogate
+                )
+            )
+        } else {
+            encoder.encodeSerializableValue(LocationTransportConfigSurrogate.serializer(), surrogate)
+        }
+    }
+}
+
+@Serializable
+data class LocationEndpointConfig(
+    @SerialName("room_id")
+    val roomId: String = "",
+    val key: String = ""
+)
+
+@Serializable
 data class LocationEntry(
     @SerialName("storage_id")
     val storageId: String,
     val name: String = "",
-    val id: String = "",
-    val key: String = "",
+    val endpoint: LocationEndpointConfig? = null,
+    val carrier: String? = null,
+    val transport: LocationTransportConfig? = null,
+    @SerialName("id")
+    val legacyId: String? = null,
+    @SerialName("room_id")
+    val legacyRoomId: String? = null,
+    @SerialName("server")
+    val legacyServer: String? = null,
+    @SerialName("key")
+    val legacyKey: String? = null,
+    @SerialName("password")
+    val legacyPassword: String? = null,
     @SerialName("bypass_provider")
-    val bypassProvider: String = LocationConfig.DEFAULT_BYPASS_PROVIDER,
-    val transport: String = LocationConfig.DEFAULT_TRANSPORT,
+    val legacyBypassProvider: String? = null,
+    @SerialName("bypassProvider")
+    val legacyBypassProviderCamel: String? = null,
+    @SerialName("provider")
+    val legacyProvider: String? = null,
     @SerialName("vp8_fps")
-    val vp8Fps: Int = LocationConfig.DEFAULT_VP8_FPS,
+    val legacyVp8Fps: Int? = null,
+    @SerialName("vp8Fps")
+    val legacyVp8FpsCamel: Int? = null,
     @SerialName("vp8_batch")
-    val vp8Batch: Int = LocationConfig.DEFAULT_VP8_BATCH
+    val legacyVp8Batch: Int? = null,
+    @SerialName("vp8Batch")
+    val legacyVp8BatchCamel: Int? = null
 ) {
     val location: LocationConfig
-        get() = LocationConfig(
-            name,
-            id,
-            key,
-            bypassProvider,
-            transport,
-            vp8Fps,
-            vp8Batch
-        ).normalized()
+        get() {
+            val provider = firstNotBlank(
+                carrier,
+                legacyBypassProvider,
+                legacyBypassProviderCamel,
+                legacyProvider
+            )
+            val transportConfig = transport ?: LocationTransportConfig()
+            val vp8Options = transportConfig.vp8
+            return LocationConfig(
+                name = name,
+                id = firstNotBlank(endpoint?.roomId, legacyId, legacyRoomId, legacyServer),
+                key = firstNotBlank(endpoint?.key, legacyKey, legacyPassword),
+                bypassProvider = provider,
+                transport = transportConfig.type,
+                vp8Fps = vp8Options?.fps
+                    ?: legacyVp8Fps
+                    ?: legacyVp8FpsCamel
+                    ?: LocationConfig.DEFAULT_VP8_FPS,
+                vp8Batch = vp8Options?.batch
+                    ?: legacyVp8Batch
+                    ?: legacyVp8BatchCamel
+                    ?: LocationConfig.DEFAULT_VP8_BATCH
+            ).normalized()
+        }
+
+    val bypassProvider: String
+        get() = location.bypassProvider
 
     fun normalized(): LocationEntry {
         val config = location
-        return copy(
+        return LocationEntry(
             storageId = storageId.trim(),
             name = config.name,
-            id = config.id,
-            key = config.key,
-            bypassProvider = config.bypassProvider,
-            transport = config.transport,
-            vp8Fps = config.vp8Fps,
-            vp8Batch = config.vp8Batch
+            endpoint = LocationEndpointConfig(
+                roomId = config.id,
+                key = config.key
+            ),
+            carrier = config.bypassProvider,
+            transport = LocationTransportConfig.from(config)
         )
     }
 
@@ -162,25 +313,29 @@ data class LocationEntry(
             return LocationEntry(
                 storageId = storageId,
                 name = config.name,
-                id = config.id,
-                key = config.key,
-                bypassProvider = config.bypassProvider,
-                transport = config.transport,
-                vp8Fps = config.vp8Fps,
-                vp8Batch = config.vp8Batch
+                endpoint = LocationEndpointConfig(
+                    roomId = config.id,
+                    key = config.key
+                ),
+                carrier = config.bypassProvider,
+                transport = LocationTransportConfig.from(config)
             ).normalized()
+        }
+
+        private fun firstNotBlank(vararg values: String?): String {
+            return values.firstOrNull { !it.isNullOrBlank() } ?: ""
         }
     }
 }
 
 @Serializable
-data class LocationBundleV3(
-    val version: Int = 3,
+data class LocationBundleV4(
+    val version: Int = 4,
     @SerialName("active_location_id")
     val activeLocationId: String? = null,
     val locations: List<LocationEntry> = emptyList()
 ) {
-    fun normalized(): LocationBundleV3 {
+    fun normalized(): LocationBundleV4 {
         val normalizedLocations = locations
             .map { it.normalized() }
             .filter { it.storageId.isNotBlank() && it.location.isComplete() }
@@ -191,9 +346,13 @@ data class LocationBundleV3(
             ?: normalizedLocations.firstOrNull()?.storageId
 
         return copy(
-            version = 3,
+            version = CURRENT_VERSION,
             activeLocationId = active,
             locations = normalizedLocations
         )
+    }
+
+    companion object {
+        const val CURRENT_VERSION = 4
     }
 }

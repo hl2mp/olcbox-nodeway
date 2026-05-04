@@ -5,6 +5,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class DesktopProxyModeTest {
 
@@ -34,7 +35,7 @@ class DesktopProxyModeTest {
             assertContains(command, "-vp8-fps")
             assertContains(command, "60")
             assertContains(command, "-vp8-batch")
-            assertContains(command, "8")
+            assertContains(command, "64")
             assertEquals(OlcRtcCommand.desktopProviderArg(provider), command[command.indexOf("-provider") + 1])
             assertContains(command, "room-$provider")
             assertContains(command, "10808")
@@ -56,6 +57,7 @@ class DesktopProxyModeTest {
         ).args()
 
         assertContains(command, LocationConfig.TRANSPORT_DATACHANNEL)
+        assertTrue("-vp8-fps" !in command)
         assertEquals("/tmp/turnbox-data", command[command.indexOf("-data") + 1])
     }
 

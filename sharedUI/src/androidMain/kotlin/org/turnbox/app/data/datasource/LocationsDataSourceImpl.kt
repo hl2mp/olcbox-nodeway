@@ -8,8 +8,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.turnbox.app.data.ACTIVE_LOCATION_CONFIG_FILE_NAME
+import org.turnbox.app.data.LEGACY_LOCATIONS_BUNDLE_FILE_NAME
 import org.turnbox.app.data.LOCATIONS_BUNDLE_FILE_NAME
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.vpn.data.KEY_IS_VPN_CONFIG_READY
 import org.turnbox.app.vpn.data.KEY_VPN_CONFIG_PATH
 import org.turnbox.app.vpn.data.vpnPrefDataStore
@@ -24,21 +25,25 @@ class LocationsDataSourceImpl(
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        explicitNulls = false
         prettyPrint = true
     }
 
-    override suspend fun loadLocationBundle(): LocationBundleV3? = withContext(Dispatchers.IO) {
+    override suspend fun loadLocationBundle(): LocationBundleV4? = withContext(Dispatchers.IO) {
         val file = File(context.filesDir, LOCATIONS_BUNDLE_FILE_NAME)
+            .takeIf { it.exists() }
+            ?: File(context.filesDir, LEGACY_LOCATIONS_BUNDLE_FILE_NAME).takeIf { it.exists() }
+            ?: return@withContext null
         if (!file.exists()) return@withContext null
         runCatching {
-            json.decodeFromString(LocationBundleV3.serializer(), file.readText()).normalized()
+            json.decodeFromString(LocationBundleV4.serializer(), file.readText()).normalized()
         }.getOrNull()
     }
 
-    override suspend fun saveLocationBundle(bundle: LocationBundleV3): Unit = withContext(Dispatchers.IO) {
+    override suspend fun saveLocationBundle(bundle: LocationBundleV4): Unit = withContext(Dispatchers.IO) {
         val normalized = bundle.normalized()
         File(context.filesDir, LOCATIONS_BUNDLE_FILE_NAME).writeText(
-            json.encodeToString(LocationBundleV3.serializer(), normalized)
+            json.encodeToString(LocationBundleV4.serializer(), normalized)
         )
         updateActiveLocationConfig(normalized)
     }
@@ -63,7 +68,7 @@ class LocationsDataSourceImpl(
         return context.vpnPrefDataStore.data.first()[KEY_LEGACY_SELECTED_LOCATION_ID]?.ifBlank { null }
     }
 
-    private suspend fun updateActiveLocationConfig(bundle: LocationBundleV3) {
+    private suspend fun updateActiveLocationConfig(bundle: LocationBundleV4) {
         val active = bundle.locations.firstOrNull { it.storageId == bundle.activeLocationId }
         val file = File(context.filesDir, ACTIVE_LOCATION_CONFIG_FILE_NAME)
 
@@ -77,7 +82,7 @@ class LocationsDataSourceImpl(
         }
 
         file.writeText(
-            json.encodeToString(LocationBundleV3.serializer(), bundle.copy(locations = listOf(active)))
+            json.encodeToString(LocationBundleV4.serializer(), bundle.copy(locations = listOf(active)))
         )
         context.vpnPrefDataStore.edit {
             it[KEY_IS_VPN_CONFIG_READY] = active.location.isComplete()

@@ -3,6 +3,8 @@ package org.turnbox.app.ui.activities
 import android.app.Activity
 import android.net.Uri
 import android.net.VpnService
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,11 +13,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import org.turnbox.app.ui.TurnboxAppContent
 import org.turnbox.app.ui.features.home.HomeScreenViewModel
 import org.turnbox.app.ui.features.locations.LocationViewModel
+import org.turnbox.app.ui.navigation.AppScreen
 import org.turnbox.app.vpn.AndroidConnectionMode
 import org.turnbox.app.vpn.AndroidSplitTunnelList
 import org.turnbox.app.vpn.AndroidSplitTunnelMode
@@ -27,12 +31,36 @@ fun AndroidMainScreen(
     locationViewModel: LocationViewModel,
     vpnManager: AndroidVpnManager
 ) {
+
+    var currentScreenRoute by rememberSaveable { mutableStateOf("home") }
+    var currentLocationId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val currentScreen: AppScreen =
+        when (currentScreenRoute) {
+            "location_settings" -> AppScreen.LocationSettings(currentLocationId)
+            else -> AppScreen.Home
+        }
+
+    val navigate: (AppScreen) -> Unit = { screen ->
+        when (screen) {
+            AppScreen.Home -> {
+                currentScreenRoute = "home"
+                currentLocationId = null
+            }
+            is AppScreen.LocationSettings -> {
+                currentScreenRoute = "location_settings"
+                currentLocationId = screen.locationId
+            }
+        }
+    }
+
     val context = LocalContext.current
     val connectionMode by vpnManager.connectionMode.collectAsState()
     val proxySettings by vpnManager.proxySettings.collectAsState()
     val splitTunnelSettings by vpnManager.splitTunnelSettings.collectAsState()
     val installedApps by vpnManager.installedApps.collectAsState()
     val homeState by viewModel.state.collectAsState()
+    val logs by viewModel.logs.collectAsState()
     val pendingLogSaveCallbacks = remember {
         mutableStateOf<Pair<(String) -> Unit, (String) -> Unit>?>(null)
     }
@@ -40,7 +68,6 @@ fun AndroidMainScreen(
         mutableStateOf<PendingVpnPermissionAction?>(null)
     }
     var isAppSettingsOpen by remember { mutableStateOf(false) }
-    var logsOpenRequest by remember { mutableStateOf(0) }
     var splitTunnelRestartPending by remember { mutableStateOf(false) }
 
     fun markSplitTunnelChanged() {
@@ -97,9 +124,20 @@ fun AndroidMainScreen(
         )
     }
 
+    fun navigateHomeFromLocationSettings() {
+        viewModel.loadCurrentConfig()
+        navigate(AppScreen.Home)
+    }
+
+    BackHandler(enabled = currentScreen is AppScreen.LocationSettings) {
+        navigateHomeFromLocationSettings()
+    }
+
     TurnboxAppContent(
         homeViewModel = viewModel,
         locationViewModel = locationViewModel,
+        currentScreen = currentScreen,
+        onNavigate = navigate,
         onToggleClick = {
             val prepIntent = if (connectionMode == AndroidConnectionMode.Tun) {
                 VpnService.prepare(context)
@@ -129,7 +167,6 @@ fun AndroidMainScreen(
             pendingLogSaveCallbacks.value = onSaved to onError
             logSaveLauncher.launch(viewModel.suggestedLogsFileName())
         },
-        logsOpenRequest = logsOpenRequest,
         showAppSettingsButton = true,
         onAppSettingsClick = {
             vpnManager.refreshInstalledApps()
@@ -143,14 +180,19 @@ fun AndroidMainScreen(
             proxySettings = proxySettings,
             splitTunnelSettings = splitTunnelSettings,
             installedApps = installedApps,
+            logs = logs,
             enabled = !homeState.isVpnLoading,
             isConnectionActive = homeState.isVpnConnected,
             onDismiss = {
                 isAppSettingsOpen = false
                 applyPendingSplitTunnelRestart()
             },
-            onApplicationLogsClick = {
-                logsOpenRequest += 1
+            onSaveLogsClick = {
+                val showToast: (String) -> Unit = { message ->
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+                pendingLogSaveCallbacks.value = showToast to showToast
+                logSaveLauncher.launch(viewModel.suggestedLogsFileName())
             },
             onModeSelected = { mode ->
                 if (mode != connectionMode && homeState.isVpnConnected) {

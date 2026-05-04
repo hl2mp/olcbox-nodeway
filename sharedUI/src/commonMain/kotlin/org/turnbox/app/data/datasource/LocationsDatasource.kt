@@ -5,18 +5,19 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.turnbox.app.data.model.LocationBundleV3
+import org.turnbox.app.data.model.LocationBundleV4
 import org.turnbox.app.data.model.LocationConfig
 import org.turnbox.app.data.model.LocationEntry
 import org.turnbox.app.data.repository.LocationsRepository
 
 interface LocationsDataSource {
-    suspend fun loadLocationBundle(): LocationBundleV3?
-    suspend fun saveLocationBundle(bundle: LocationBundleV3)
+    suspend fun loadLocationBundle(): LocationBundleV4?
+    suspend fun saveLocationBundle(bundle: LocationBundleV4)
     suspend fun loadLegacyLocations(): List<Pair<String, String>>
     suspend fun loadLegacyActiveLocationId(): String?
 }
@@ -29,10 +30,11 @@ class LocationsRepositoryImpl(
         ignoreUnknownKeys = true
         coerceInputValues = true
         encodeDefaults = true
+        explicitNulls = false
         prettyPrint = true
     }
 
-    override suspend fun getBundle(): LocationBundleV3 {
+    override suspend fun getBundle(): LocationBundleV4 {
         val stored = dataSource.loadLocationBundle()?.normalized()
         if (stored != null && stored.locations.isNotEmpty()) return stored
 
@@ -43,12 +45,12 @@ class LocationsRepositoryImpl(
         return legacy
     }
 
-    override suspend fun saveBundle(bundle: LocationBundleV3) {
+    override suspend fun saveBundle(bundle: LocationBundleV4) {
         dataSource.saveLocationBundle(bundle.normalized())
     }
 
     override suspend fun exportBundle(): String {
-        return json.encodeToString(LocationBundleV3.serializer(), getBundle())
+        return json.encodeToString(LocationBundleV4.serializer(), getBundle())
     }
 
     override suspend fun importText(text: String) {
@@ -102,35 +104,36 @@ class LocationsRepositoryImpl(
         return bundle.locations.firstOrNull { it.storageId == bundle.activeLocationId }
     }
 
-    private suspend fun migrateLegacyBundle(): LocationBundleV3 {
+    private suspend fun migrateLegacyBundle(): LocationBundleV4 {
         val legacy = dataSource.loadLegacyLocations().mapNotNull { (storageId, text) ->
             parseSingleLocation(text, storageId)
         }
         val active = dataSource.loadLegacyActiveLocationId()?.takeIf { id ->
             legacy.any { it.storageId == id }
         }
-        return LocationBundleV3(
+        return LocationBundleV4(
             activeLocationId = active,
             locations = legacy
         ).normalized()
     }
 
-    private fun parseImport(text: String): LocationBundleV3? {
+    private fun parseImport(text: String): LocationBundleV4? {
         if (!text.startsWith("{") || !text.endsWith("}")) return null
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return null
         parseBundle(root)?.let { return it }
         return parseSingleLocation(root, null)?.let {
-            LocationBundleV3(
+            LocationBundleV4(
                 activeLocationId = it.storageId,
                 locations = listOf(it)
             )
         }
     }
 
-    private fun parseBundle(root: JsonObject): LocationBundleV3? {
+    private fun parseBundle(root: JsonObject): LocationBundleV4? {
         val locationsElement = root["locations"] ?: return null
         val locations = runCatching { locationsElement.jsonArray }.getOrNull()?.mapNotNull { element ->
             val item = element.jsonObjectOrNull() ?: return@mapNotNull null
+            decodeLocationEntry(item)?.let { return@mapNotNull it }
             val storageId = item.string("storage_id")
                 ?: item.string("storageId")
                 ?: item.string("id")?.let { "imported_${it.storageSlug()}" }
@@ -140,7 +143,7 @@ class LocationsRepositoryImpl(
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 3
         if (version < 3 && locations.isEmpty()) return null
 
-        return LocationBundleV3(
+        return LocationBundleV4(
             activeLocationId = root.string("active_location_id") ?: root.string("activeLocationId"),
             locations = locations
         )
@@ -155,6 +158,8 @@ class LocationsRepositoryImpl(
     }
 
     private fun parseSingleLocation(root: JsonObject, fallbackStorageId: String?): LocationEntry? {
+        decodeLocationEntry(root)?.let { return it }
+
         val source = root["location"]?.jsonObjectOrNull()
             ?: root["hysteria"]?.jsonObjectOrNull()
             ?: root
@@ -226,6 +231,14 @@ class LocationsRepositoryImpl(
             "imported_${location.storageSlug()}"
         )
         return LocationEntry.from(storageId, location)
+    }
+
+    private fun decodeLocationEntry(root: JsonObject): LocationEntry? {
+        return runCatching {
+            json.decodeFromJsonElement(LocationEntry.serializer(), root)
+                .normalized()
+                .takeIf { it.location.isComplete() }
+        }.getOrNull()
     }
 
     private fun LocationConfig.storageSlug(): String {
