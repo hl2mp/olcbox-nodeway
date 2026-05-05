@@ -3,8 +3,9 @@
 `olcrtc` Protocol over TURN tunnel manager built with Kotlin Multiplatform and Compose.
 
 <p align="center">
-  <img src="docs/screenshots/photo_2026-05-05_15-40-57.jpg" alt="Olcbox home screen" width="260">
-  <img src="docs/screenshots/photo_2026-05-05_15-40-59.jpg" alt="Olcbox location settings screen" width="260">
+  <img src="docs/screenshots/photo_2026-05-05_15-40-57.jpg" alt="Olcbox home screen" width="200">
+  <img src="docs/screenshots/photo_2026-05-05_15-40-59.jpg" alt="Olcbox location settings screen" width="200">
+  <img src="docs/screenshots/photo_2026-05-05_20-40-45.jpg" alt="Olcbox split tunneling settings screen" width="200">
 </p>
 
 ## Features
