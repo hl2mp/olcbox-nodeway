@@ -1,3 +1,3 @@
--keep class org.turnbox.app.vpn.service.TurnboxVpnService {
+-keep class org.olcbox.app.vpn.service.OlcboxVpnService {
     *;
 }

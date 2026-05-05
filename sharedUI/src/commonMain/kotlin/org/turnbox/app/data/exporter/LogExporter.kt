@@ -1,5 +1,0 @@
-package org.turnbox.app.data.exporter
-
-interface LogExporter {
-    suspend fun writeLogs(target: Any, content: String): Result<String>
-}

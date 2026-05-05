@@ -1,4 +1,4 @@
-name: Build Turnbox Releases
+name: Build Olcbox Releases
 
 on:
   workflow_dispatch:
@@ -54,13 +54,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $exe = Get-ChildItem "desktopApp/build/compose/binaries/main-release/exe/*.exe" | Select-Object -First 1
-          Copy-Item $exe.FullName "dist/Turnbox-windows-amd64.exe"
+          Copy-Item $exe.FullName "dist/Olcbox-windows-amd64.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnbox-windows-amd64-exe
-          path: olcbox/dist/Turnbox-windows-amd64.exe
+          name: Olcbox-windows-amd64-exe
+          path: olcbox/dist/Olcbox-windows-amd64.exe
 
   build-macos:
     runs-on: macos-latest
@@ -103,13 +103,13 @@ jobs:
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg dist/Turnbox-macos.dmg
+          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg dist/Olcbox-macos.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnbox-macos-dmg
-          path: olcbox/dist/Turnbox-macos.dmg
+          name: Olcbox-macos-dmg
+          path: olcbox/dist/Olcbox-macos.dmg
 
   build-linux:
     runs-on: ubuntu-latest
@@ -157,13 +157,13 @@ jobs:
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/deb/*.deb dist/Turnbox-linux-amd64.deb
+          cp desktopApp/build/compose/binaries/main-release/deb/*.deb dist/Olcbox-linux-amd64.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnbox-linux-amd64-deb
-          path: olcbox/dist/Turnbox-linux-amd64.deb
+          name: Olcbox-linux-amd64-deb
+          path: olcbox/dist/Olcbox-linux-amd64.deb
 
   build-android:
     runs-on: ubuntu-latest
@@ -258,13 +258,13 @@ jobs:
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp androidApp/build/outputs/apk/release/*.apk dist/Turnbox-android-release.apk
+          cp androidApp/build/outputs/apk/release/*.apk dist/Olcbox-android-release.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnbox-android-apk
-          path: olcbox/dist/Turnbox-android-release.apk
+          name: Olcbox-android-apk
+          path: olcbox/dist/Olcbox-android-release.apk
 
   publish-nightly:
     runs-on: ubuntu-latest
@@ -304,14 +304,14 @@ jobs:
             done
 
             gh release edit nightly \
-              --title "Nightly Turnbox builds" \
+              --title "Nightly Olcbox builds" \
               --notes "$release_notes" \
               --prerelease
             gh release upload nightly "${assets[@]}" --clobber
           else
             gh release create nightly "${assets[@]}" \
               --target "$GITHUB_SHA" \
-              --title "Nightly Turnbox builds" \
+              --title "Nightly Olcbox builds" \
               --notes "$release_notes" \
               --prerelease
           fi

@@ -11,16 +11,16 @@ import java.awt.Dimension
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
-import org.turnbox.app.data.datasource.JvmLocationsDataSourceImpl
-import org.turnbox.app.data.datasource.LocationsRepositoryImpl
-import org.turnbox.app.data.exporter.JvmLogExporter
-import org.turnbox.app.data.importer.JvmConfigImporter
-import org.turnbox.app.ui.TurnboxAppContent
-import org.turnbox.app.ui.features.home.HomeScreenViewModel
-import org.turnbox.app.ui.features.locations.LocationViewModel
-import org.turnbox.app.ui.navigation.AppScreen
-import org.turnbox.app.ui.theme.AppTheme
-import org.turnbox.app.vpn.DesktopVpnManager
+import org.olcbox.app.data.datasource.JvmLocationsDataSourceImpl
+import org.olcbox.app.data.datasource.LocationsRepositoryImpl
+import org.olcbox.app.data.exporter.JvmLogExporter
+import org.olcbox.app.data.importer.JvmConfigImporter
+import org.olcbox.app.ui.OlcboxAppContent
+import org.olcbox.app.ui.features.home.HomeScreenViewModel
+import org.olcbox.app.ui.features.locations.LocationViewModel
+import org.olcbox.app.ui.navigation.AppScreen
+import org.olcbox.app.ui.theme.AppTheme
+import org.olcbox.app.vpn.DesktopVpnManager
 
 private class DesktopAppDependencies {
     private val locationsDataSource = JvmLocationsDataSourceImpl()
@@ -46,7 +46,7 @@ fun main() = application {
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Home) }
 
     Window(
-        title = "Turnbox",
+        title = "olcbox",
         state = rememberWindowState(width = 430.dp, height = 780.dp),
         onCloseRequest = {
             dependencies.close()
@@ -60,7 +60,7 @@ fun main() = application {
         }
 
         AppTheme {
-            TurnboxAppContent(
+            OlcboxAppContent(
                 homeViewModel = dependencies.homeViewModel,
                 locationViewModel = dependencies.locationViewModel,
                 currentScreen = currentScreen,
@@ -107,13 +107,13 @@ fun main() = application {
 }
 
 private fun chooseConfigFile(owner: Frame): File? {
-    val dialog = FileDialog(owner, "Import Turnbox Config", FileDialog.LOAD)
+    val dialog = FileDialog(owner, "Import Olcbox Config", FileDialog.LOAD)
     dialog.isVisible = true
     return dialog.files.firstOrNull()
 }
 
 private fun chooseSaveFile(owner: Frame, defaultName: String): File? {
-    val dialog = FileDialog(owner, "Save Turnbox Logs", FileDialog.SAVE)
+    val dialog = FileDialog(owner, "Save Olcbox Logs", FileDialog.SAVE)
     dialog.file = defaultName
     dialog.isVisible = true
 

@@ -19,7 +19,7 @@
     <application
         android:name=".App"
         android:icon="@mipmap/ic_launcher"
-        android:label="Turnbox"
+        android:label="Olcbox"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:extractNativeLibs="true"
         tools:replace="android:extractNativeLibs"
@@ -38,7 +38,7 @@
         </activity>
 
         <activity
-            android:name="org.turnbox.app.vpn.service.CaptchaActivity"
+            android:name="org.olcbox.app.vpn.service.CaptchaActivity"
             android:theme="@android:style/Theme.DeviceDefault.Light.Dialog"
             android:excludeFromRecents="true"
             android:exported="false" />
@@ -47,13 +47,13 @@
             android:name=".DebugVpnControlReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="org.turnbox.app.androidApp.DEBUG_START_VPN" />
-                <action android:name="org.turnbox.app.androidApp.DEBUG_STOP_VPN" />
+                <action android:name="org.olcbox.app.androidApp.DEBUG_START_VPN" />
+                <action android:name="org.olcbox.app.androidApp.DEBUG_STOP_VPN" />
             </intent-filter>
         </receiver>
 
         <service
-            android:name="org.turnbox.app.vpn.service.TurnboxVpnService"
+            android:name="org.olcbox.app.vpn.service.OlcboxVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false"
             android:foregroundServiceType="specialUse">

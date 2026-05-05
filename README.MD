@@ -1,4 +1,4 @@
-# Turnbox
+# Olcbox
 
 Kotlin Multiplatform app with shared Compose UI.
 
@@ -127,7 +127,7 @@ Run on macOS:
 Output:
 
 ```text
-desktopApp/build/compose/binaries/main-release/dmg/Turnbox-1.0.0.dmg
+desktopApp/build/compose/binaries/main-release/dmg/Olcbox-1.0.0.dmg
 ```
 
 The generated DMG is not notarized unless Apple signing/notarization is configured separately.
@@ -146,7 +146,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 Output:
 
 ```text
-desktopApp\build\compose\binaries\main-release\exe\Turnbox-1.0.0.exe
+desktopApp\build\compose\binaries\main-release\exe\Olcbox-1.0.0.exe
 ```
 
 Build MSI on Windows:
@@ -159,7 +159,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 Output:
 
 ```text
-desktopApp\build\compose\binaries\main-release\msi\Turnbox-1.0.0.msi
+desktopApp\build\compose\binaries\main-release\msi\Olcbox-1.0.0.msi
 ```
 
 If JPackage reports missing Windows packaging tools, install a JDK with `jpackage` support and WiX Toolset, then make sure WiX is available in `PATH`.
@@ -175,26 +175,26 @@ Run on Linux:
 Output:
 
 ```text
-desktopApp/build/compose/binaries/main-release/deb/turnbox_1.0.0_amd64.deb
+desktopApp/build/compose/binaries/main-release/deb/olcbox_1.0.0_amd64.deb
 ```
 
 Linux packaging also must be run on Linux.
 
-Linux runtime uses TUN mode, not system proxy mode. Start requires root privileges for `olcrtc`, `hev-socks5-tunnel`, and route setup. By default Turnbox tries `pkexec` first and falls back to `sudo -n`.
+Linux runtime uses TUN mode, not system proxy mode. Start requires root privileges for `olcrtc`, `hev-socks5-tunnel`, and route setup. By default Olcbox tries `pkexec` first and falls back to `sudo -n`.
 
 Force sudo:
 
 ```bash
-TURNBOX_LINUX_PRIVILEGE=sudo ./gradlew :desktopApp:run
+OLCBOX_LINUX_PRIVILEGE=sudo ./gradlew :desktopApp:run
 ```
 
 Force Polkit:
 
 ```bash
-TURNBOX_LINUX_PRIVILEGE=pkexec ./gradlew :desktopApp:run
+OLCBOX_LINUX_PRIVILEGE=pkexec ./gradlew :desktopApp:run
 ```
 
-The TUN interface is `turnbox0`. Stop removes the policy routes and reverts `systemd-resolved` settings when `resolvectl` is available.
+The TUN interface is `olcbox0`. Stop removes the policy routes and reverts `systemd-resolved` settings when `resolvectl` is available.
 
 ## Current OS Release Shortcut
 

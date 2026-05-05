@@ -46,7 +46,7 @@ val olcrtcAndroidAarDependency = files(olcrtcAndroidAarFile).builtBy(buildOlcrtc
 
 kotlin {
     android {
-        namespace = "org.turnbox.app"
+        namespace = "org.olcbox.app"
         compileSdk = 36
         minSdk = 23
 

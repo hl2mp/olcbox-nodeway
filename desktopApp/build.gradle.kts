@@ -160,7 +160,7 @@ compose.desktop {
         nativeDistributions {
             modules("jdk.httpserver")
             targetFormats(TargetFormat.Dmg, TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "Turnbox"
+            packageName = "Olcbox"
             packageVersion = "1.0.0"
 
             linux {
@@ -171,7 +171,7 @@ compose.desktop {
             }
             macOS {
                 iconFile.set(project.file("appIcons/MacosIcon.icns"))
-                bundleID = "org.turnbox.app.desktopApp"
+                bundleID = "org.olcbox.app.desktopApp"
             }
         }
     }
