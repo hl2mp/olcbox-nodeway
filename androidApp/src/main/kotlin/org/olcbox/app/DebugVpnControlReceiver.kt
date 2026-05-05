@@ -1,4 +1,4 @@
-package org.olcbox.app.androidApp
+package org.olcbox.app
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -37,7 +37,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_DEBUG_START_VPN = "org.olcbox.app.androidApp.DEBUG_START_VPN"
-        const val ACTION_DEBUG_STOP_VPN = "org.olcbox.app.androidApp.DEBUG_STOP_VPN"
+        const val ACTION_DEBUG_START_VPN = "org.olcbox.app.DEBUG_START_VPN"
+        const val ACTION_DEBUG_STOP_VPN = "org.olcbox.app.DEBUG_STOP_VPN"
     }
 }

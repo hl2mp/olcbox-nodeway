@@ -1,59 +1,106 @@
 # Olcbox
 
-Kotlin Multiplatform app with shared Compose UI.
+`olcrtc` Protocol over TURN tunnel manager built with Kotlin Multiplatform and Compose.
 
-Android supports TUN mode through `VpnService` with bundled `hev-socks5-tunnel` and `olcrtc`, plus proxy mode with local `olcrtc` SOCKS5.
-macOS and Windows desktop builds use proxy mode: local `olcrtc` SOCKS5 plus OS PAC proxy settings.
-Linux desktop builds use TUN mode: local `olcrtc` SOCKS5 plus bundled `hev-socks5-tunnel`.
+<p align="center">
+  <img src="docs/screenshots/photo_2026-05-05_15-40-57.jpg" alt="Olcbox home screen" width="260">
+  <img src="docs/screenshots/photo_2026-05-05_15-40-59.jpg" alt="Olcbox location settings screen" width="260">
+</p>
 
-## Prerequisites
+## Features
 
-- JDK 17 or newer.
-- Android Studio, Android SDK and NDK for Android builds.
-- Go for desktop builds, because `desktopApp` builds bundled `olcrtc` binaries from source.
-- The `olcrtc` fork must be available locally.
-- Linux TUN mode requires `iproute2`, `/dev/net/tun`, and root/Polkit/sudo privileges.
+- One-tap tunnel start/stop with live relay status.
+- Saved connection profiles with active location selection.
+- Carriers: Jazz, Telemost, WB Stream.
+- Transports: DataChannel, VP8, SEI.
+- VP8 tuning: FPS and batch size.
+- Connectivity checks for individual locations.
+- Config import from clipboard/file and export to clipboard.
+- Diagnostics log view with log export.
+- Android TUN/proxy modes, SOCKS5 credentials, split tunneling.
+- Network migration, reconnect handling, and watchdog recovery.
 
-For local development keep the `olcrtc` fork next to this repository or pass it explicitly.
+## Platform Matrix
 
-```bash
+| Platform | Modes | Runtime |
+| --- | --- | --- |
+| Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
+| macOS | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
+| Windows | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
+| Linux | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, policy routes |
+
+## Requirements
+
+| Area | Requirement |
+| --- | --- |
+| JVM | JDK 17+ |
+| Android | Android Studio, Android SDK, Android NDK |
+| Desktop native assets | Go and local `olcrtc` fork |
+| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
+
+Default local `olcrtc` path:
+
+```text
 ../olcrtc-original
 ```
 
-Use `OLCRTC_REPO` if the fork is somewhere else:
+Override it with `OLCRTC_REPO`:
 
 ```bash
 OLCRTC_REPO=/path/to/olcrtc ./gradlew :desktopApp:run
 ```
-
-On Windows PowerShell:
 
 ```powershell
 $env:OLCRTC_REPO="C:\path\to\olcrtc"
 .\gradlew.bat :desktopApp:run
 ```
 
-## Android
+## Commands
 
-Debug APK:
+| Task | Command |
+| --- | --- |
+| Android debug APK | `./gradlew :androidApp:assembleDebug` |
+| Install Android debug APK | `./gradlew :androidApp:installDebug` |
+| Run desktop app | `./gradlew :desktopApp:run` |
+| Run desktop app with hot reload | `./gradlew :desktopApp:hotRun --auto` |
+| Build desktop native assets | `./gradlew :desktopApp:buildDesktopNativeAssets` |
+| Package current host OS | `./gradlew :desktopApp:packageReleaseDistributionForCurrentOS` |
+| Main checks | `./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug` |
+| JVM tests | `./gradlew :sharedUI:jvmTest` |
 
-```bash
-./gradlew :androidApp:assembleDebug
-```
+## Build Outputs
 
-Output:
+| Target | Command | Output |
+| --- | --- | --- |
+| Android debug | `./gradlew :androidApp:assembleDebug` | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` |
+| Android release | `./gradlew :androidApp:assembleRelease` | `androidApp/build/outputs/apk/release/androidApp-release.apk` |
+| macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/Olcbox-1.0.0.dmg` |
+| Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\Olcbox-1.0.0.exe` |
+| Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\Olcbox-1.0.0.msi` |
+| Linux DEB | `./gradlew :desktopApp:packageReleaseDeb` | `desktopApp/build/compose/binaries/main-release/deb/olcbox_1.0.0_amd64.deb` |
 
-```text
-androidApp/build/outputs/apk/debug/androidApp-debug.apk
-```
+## Native Assets
 
-Install debug APK to a connected device:
+| Asset | Path |
+| --- | --- |
+| macOS `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-darwin-arm64` |
+| Linux `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-amd64` |
+| Linux `olcrtc` ARM | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-arm64` |
+| Windows `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-windows-amd64.exe` |
+| Linux `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-amd64` |
+| Linux `hev-socks5-tunnel` ARM | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-arm64` |
 
-```bash
-./gradlew :androidApp:installDebug
-```
+## Notes
 
-Release APK requires `keystore.properties` in the repository root:
+- Android native ABIs: `arm64-v8a`, `x86_64`.
+- Android proxy mode listens on `127.0.0.1:10808` with generated SOCKS5 credentials.
+- Android release builds require `keystore.properties` in the repository root.
+- macOS DMG output is not notarized unless signing/notarization is configured separately.
+- Windows installers must be built on Windows with `jpackage` and WiX available.
+- Linux TUN interface: `olcbox0`.
+- Linux stop removes policy routes and reverts `systemd-resolved` settings when `resolvectl` is available.
+
+`keystore.properties`:
 
 ```properties
 storeFile=/absolute/path/to/release.keystore
@@ -62,160 +109,9 @@ keyAlias=...
 keyPassword=...
 ```
 
-Build release APK:
-
-```bash
-./gradlew :androidApp:assembleRelease
-```
-
-Output:
-
-```text
-androidApp/build/outputs/apk/release/androidApp-release.apk
-```
-
-Android native libraries are built by Gradle/NDK from `androidApp/src/main/jni`.
-Configured ABIs are `arm64-v8a` and `x86_64`.
-
-Android mode selector is available from application settings in the top bar. TUN mode routes device traffic through the VPN interface. Proxy mode starts the local SOCKS5 endpoint without creating a VPN interface.
-Android proxy mode exposes authenticated SOCKS5 on `127.0.0.1:10808`; random username and password values are generated on first launch and can be changed from application settings.
-
-## Desktop Development
-
-Run desktop app:
-
-```bash
-./gradlew :desktopApp:run
-```
-
-Run desktop app with hot reload:
-
-```bash
-./gradlew :desktopApp:hotRun --auto
-```
-
-Build bundled desktop `olcrtc` binaries only:
-
-```bash
-./gradlew :desktopApp:buildDesktopNativeAssets
-```
-
-Outputs:
-
-```text
-desktopApp/build/generated/desktopNativeResources/native/olcrtc-darwin-arm64
-desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-amd64
-desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-arm64
-desktopApp/build/generated/desktopNativeResources/native/olcrtc-windows-amd64.exe
-```
-
-On Linux the same task also builds host-arch `hev-socks5-tunnel`:
-
-```text
-desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-amd64
-desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-arm64
-```
-
-## macOS Release
-
-Run on macOS:
-
-```bash
-./gradlew :desktopApp:packageReleaseDmg
-```
-
-Output:
-
-```text
-desktopApp/build/compose/binaries/main-release/dmg/Olcbox-1.0.0.dmg
-```
-
-The generated DMG is not notarized unless Apple signing/notarization is configured separately.
-
-## Windows Release
-
-Windows installers must be built on Windows. Compose/JPackage does not cross-package Windows `.exe` or `.msi` from macOS/Linux.
-
-Build EXE on Windows:
-
-```powershell
-$env:OLCRTC_REPO="C:\path\to\olcrtc"
-.\gradlew.bat :desktopApp:packageReleaseExe
-```
-
-Output:
-
-```text
-desktopApp\build\compose\binaries\main-release\exe\Olcbox-1.0.0.exe
-```
-
-Build MSI on Windows:
-
-```powershell
-$env:OLCRTC_REPO="C:\path\to\olcrtc"
-.\gradlew.bat :desktopApp:packageReleaseMsi
-```
-
-Output:
-
-```text
-desktopApp\build\compose\binaries\main-release\msi\Olcbox-1.0.0.msi
-```
-
-If JPackage reports missing Windows packaging tools, install a JDK with `jpackage` support and WiX Toolset, then make sure WiX is available in `PATH`.
-
-## Linux Release
-
-Run on Linux:
-
-```bash
-./gradlew :desktopApp:packageReleaseDeb
-```
-
-Output:
-
-```text
-desktopApp/build/compose/binaries/main-release/deb/olcbox_1.0.0_amd64.deb
-```
-
-Linux packaging also must be run on Linux.
-
-Linux runtime uses TUN mode, not system proxy mode. Start requires root privileges for `olcrtc`, `hev-socks5-tunnel`, and route setup. By default Olcbox tries `pkexec` first and falls back to `sudo -n`.
-
-Force sudo:
+Linux privilege override:
 
 ```bash
 OLCBOX_LINUX_PRIVILEGE=sudo ./gradlew :desktopApp:run
-```
-
-Force Polkit:
-
-```bash
 OLCBOX_LINUX_PRIVILEGE=pkexec ./gradlew :desktopApp:run
-```
-
-The TUN interface is `olcbox0`. Stop removes the policy routes and reverts `systemd-resolved` settings when `resolvectl` is available.
-
-## Current OS Release Shortcut
-
-Package for the current host OS:
-
-```bash
-./gradlew :desktopApp:packageReleaseDistributionForCurrentOS
-```
-
-This does not cross-package other operating systems.
-
-## Checks
-
-Run the main verification set:
-
-```bash
-./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug
-```
-
-Run desktop JVM tests only:
-
-```bash
-./gradlew :sharedUI:jvmTest
 ```

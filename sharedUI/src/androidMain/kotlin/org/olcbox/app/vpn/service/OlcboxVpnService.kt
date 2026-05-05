@@ -232,7 +232,10 @@ class OlcboxVpnService : VpnService() {
         })
     }
 
-    private fun startTunnel(isMigration: Boolean) {
+    private fun startTunnel(
+        isMigration: Boolean,
+        forceFullRestart: Boolean = false
+    ) {
         startupJob?.cancel()
         watchdogJob?.cancel()
         if (!isMigration) {
@@ -268,7 +271,7 @@ class OlcboxVpnService : VpnService() {
                     return@withLock
                 }
 
-                if (isMigration && canReconnectTransportInPlace()) {
+                if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
                     reconnectTransport(location, requestedGeneration)
                 } else {
                     startFullTunnel(location, requestedGeneration, isMigration)
@@ -669,13 +672,9 @@ class OlcboxVpnService : VpnService() {
         updateUnderlyingNetwork(null)
         unbindProcessFromNetwork()
 
-        cleanupVpnInterface()
-        tun2socksThread?.interrupt()
-        tun2socksThread = null
-
         cleanupJob = scope.launch {
             try {
-                stopTransportProcesses(closeTun = true)
+                stopTransportProcesses(closeTun = true, stopMobileBeforeTun = true)
                 recoveryRequestedForGeneration = 0L
                 if (generation == cleanupGeneration) {
                     setStatus(VpnStatus.Disconnected)
@@ -689,16 +688,24 @@ class OlcboxVpnService : VpnService() {
 
     private suspend fun stopTransportProcesses(
         closeTun: Boolean,
-        waitForSocksPort: Boolean = true
+        waitForSocksPort: Boolean = true,
+        stopMobileBeforeTun: Boolean = false
     ) {
         stopAuthenticatedSocksProxy()
+        if (stopMobileBeforeTun) {
+            stopMobile()
+        }
         stopTun2socks()
         if (closeTun) cleanupVpnInterface()
         tun2socksThread?.interrupt()
         tun2socksThread = null
         if (waitForSocksPort) {
-            stopMobileAndWait()
-        } else {
+            if (stopMobileBeforeTun) {
+                waitForSocksPortReleased()
+            } else {
+                stopMobileAndWait()
+            }
+        } else if (!stopMobileBeforeTun) {
             stopMobile()
         }
         if (closeTun) {
@@ -802,7 +809,7 @@ class OlcboxVpnService : VpnService() {
         if (lowerLine.contains("ice connection state changed: failed") ||
             lowerLine.contains("peer connection state changed: failed")
         ) {
-            requestTransportRecovery("RTC failed", fullRestart = false)
+            requestTransportRecovery("RTC failed", fullRestart = shouldRecreateTunnelOnRtcLoss())
             return
         }
 
@@ -810,7 +817,7 @@ class OlcboxVpnService : VpnService() {
             lowerLine.contains("peer connection state changed: closed")
         ) {
             if (!Mobile.isRunning()) {
-                requestTransportRecovery("RTC closed", fullRestart = false)
+                requestTransportRecovery("RTC closed", fullRestart = shouldRecreateTunnelOnRtcLoss())
             }
         }
     }
@@ -822,20 +829,14 @@ class OlcboxVpnService : VpnService() {
         if (recoveryRequestedForGeneration == recoveryGeneration) return
 
         recoveryRequestedForGeneration = recoveryGeneration
+        setStatus(VpnStatus.Reconnecting)
+        updateNotification("Reconnecting...")
         addLog("$reason; reconnecting transport")
-        if (fullRestart) {
-            scope.launch {
-                tunnelMutex.withLock {
-                    stopTun2socks()
-                    cleanupVpnInterface()
-                    tun2socksThread?.interrupt()
-                    tun2socksThread = null
-                }
-                startTunnel(isMigration = true)
-            }
-        } else {
-            startTunnel(isMigration = true)
-        }
+        startTunnel(isMigration = true, forceFullRestart = fullRestart)
+    }
+
+    private fun shouldRecreateTunnelOnRtcLoss(): Boolean {
+        return connectionMode == AndroidConnectionMode.Tun
     }
 
     private fun cleanupVpnInterface() {

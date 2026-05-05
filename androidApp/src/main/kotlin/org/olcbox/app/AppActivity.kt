@@ -1,4 +1,4 @@
-package org.olcbox.app.androidApp
+package org.olcbox.app
 
 import android.Manifest
 import android.os.Build

@@ -1,4 +1,4 @@
-package org.olcbox.app.androidApp
+package org.olcbox.app
 
 import android.app.Application
 import android.content.Context

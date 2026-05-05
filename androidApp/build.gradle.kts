@@ -22,7 +22,7 @@ val hasReleaseKeystore =
             .all { key -> !keystoreProperties.getProperty(key).isNullOrBlank() }
 
 android {
-    namespace = "org.olcbox.app.androidApp"
+    namespace = "org.olcbox.app"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
@@ -30,7 +30,7 @@ android {
         minSdk = 23
         targetSdk = 36
 
-        applicationId = "org.olcbox.app.androidApp"
+        applicationId = "org.olcbox.app"
         versionCode = 1
         versionName = "1.0.0"
 

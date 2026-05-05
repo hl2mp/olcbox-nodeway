@@ -46,7 +46,7 @@ val olcrtcAndroidAarDependency = files(olcrtcAndroidAarFile).builtBy(buildOlcrtc
 
 kotlin {
     android {
-        namespace = "org.olcbox.app"
+        namespace = "org.olcbox.app.sharedui"
         compileSdk = 36
         minSdk = 23
 

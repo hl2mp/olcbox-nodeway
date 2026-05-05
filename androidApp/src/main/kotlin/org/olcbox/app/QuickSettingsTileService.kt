@@ -1,4 +1,4 @@
-package org.olcbox.app.androidApp
+package org.olcbox.app
 
 import android.app.PendingIntent
 import android.content.Intent
