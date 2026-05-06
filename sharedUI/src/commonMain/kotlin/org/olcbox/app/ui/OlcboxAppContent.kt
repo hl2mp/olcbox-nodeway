@@ -8,6 +8,7 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import org.olcbox.app.ui.features.home.HomeScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
@@ -29,6 +30,8 @@ fun OlcboxAppContent(
     showAppSettingsButton: Boolean,
     onAppSettingsClick: () -> Unit
 ) {
+    val homeScrollState = rememberScrollState()
+
     AnimatedContent(
         targetState = currentScreen,
         label = "app_screen_transition",
@@ -64,6 +67,7 @@ fun OlcboxAppContent(
                 HomeScreen(
                     viewModel = homeViewModel,
                     locationViewModel = locationViewModel,
+                    scrollState = homeScrollState,
                     onToggleClick = onToggleClick,
                     onImportFileRequested = onImportFileRequested,
                     onImportFromClipboardRequested = onImportFromClipboardRequested,

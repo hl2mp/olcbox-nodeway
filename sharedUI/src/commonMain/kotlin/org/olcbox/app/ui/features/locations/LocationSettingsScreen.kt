@@ -481,7 +481,7 @@ private fun roomIdPlaceholder(provider: String): String {
     return when (LocationConfig.normalizeProvider(provider)) {
         LocationConfig.PROVIDER_TELEMOST -> "12345678901234"
         LocationConfig.PROVIDER_JAZZ -> "room id or any"
-        LocationConfig.PROVIDER_WB_STREAM -> "019daab6-e133-7a92-a03a-83861d304d33"
+        LocationConfig.PROVIDER_WB_STREAM -> "123e4567-e89b-12d3-a456-426614174000"
         else -> "room id"
     }
 }

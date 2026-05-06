@@ -6,10 +6,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 
@@ -38,6 +42,8 @@ class LocationViewModel(
 
     var pingsState by mutableStateOf<PingsState>(PingsState.Idle)
         private set
+
+    private var refreshPingsJob: Job? = null
 
     var editingConfig by mutableStateOf(LocationConfig())
     var editingName by mutableStateOf("")
@@ -98,21 +104,50 @@ class LocationViewModel(
 
     fun refreshPings(performPing: suspend (LocationConfig) -> Long?) {
         val previousPings = (pingsState as? PingsState.Success)?.pings
-        viewModelScope.launch {
+            ?: (pingsState as? PingsState.Loading)?.lastPings
+        val locationsSnapshot = locations.toList()
+
+        refreshPingsJob?.cancel()
+        refreshPingsJob = viewModelScope.launch {
             pingsState = PingsState.Loading(lastPings = previousPings)
             try {
-                val results = locations.map { location ->
-                    async {
-                        val config = location.config ?: return@async location.storageId to null
-                        val result = performPing(config)
-                        location.storageId to result?.toInt()
-                    }
-                }.awaitAll().toMap()
+                val results = supervisorScope {
+                    locationsSnapshot.map { location ->
+                        async {
+                            location.storageId to checkLocationPing(location, performPing)?.toInt()
+                        }
+                    }.awaitAll().toMap()
+                }
 
                 pingsState = PingsState.Success(results)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 pingsState = PingsState.Error(e.message ?: "Error")
             }
+        }
+    }
+
+    private suspend fun checkLocationPing(
+        location: LocationItem,
+        performPing: suspend (LocationConfig) -> Long?
+    ): Long? {
+        val config = location.config?.takeIf { it.isComplete() } ?: return null
+        return withTimeoutOrNull(LOCATION_PING_TIMEOUT_MS) {
+            repeat(LOCATION_PING_ATTEMPTS) { attempt ->
+                val result = try {
+                    performPing(config)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                if (result != null) return@withTimeoutOrNull result
+                if (attempt < LOCATION_PING_ATTEMPTS - 1) {
+                    delay(LOCATION_PING_RETRY_DELAY_MS)
+                }
+            }
+            null
         }
     }
 
@@ -228,5 +263,11 @@ class LocationViewModel(
             loadLocations()
             onComplete()
         }
+    }
+
+    private companion object {
+        const val LOCATION_PING_ATTEMPTS = 2
+        const val LOCATION_PING_TIMEOUT_MS = 30_000L
+        const val LOCATION_PING_RETRY_DELAY_MS = 250L
     }
 }

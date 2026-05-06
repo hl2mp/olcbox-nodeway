@@ -106,23 +106,36 @@ class DesktopVpnManager private constructor(
         val location = locationConfig.normalized()
         if (!location.isComplete()) return@withContext null
 
-        if (_status.value is VpnStatus.Connected) {
-            return@withContext measureTcpConnect(PacServer.LOCAL_SOCKS_PORT)
-        }
-
-        runCatching {
-            val port = allocateLocalPort()
-            val binary = DesktopNativeAssets.resolveOlcRtcBinary()
-            val ready = CompletableDeferred<Unit>()
-            val checkProcess = startOlcRtcProcess(binary, location, port, ready, logOutput = false, privileged = false)
-            val startedAt = System.currentTimeMillis()
-            try {
-                waitForOlcRtcReady(checkProcess, ready, port)
-                System.currentTimeMillis() - startedAt
-            } finally {
-                stopProcess(checkProcess)
+        repeat(CONNECTION_CHECK_ATTEMPTS) { attempt ->
+            val result = runCatching { checkConnectionOnce(location) }.getOrNull()
+            if (result != null) return@withContext result
+            if (attempt < CONNECTION_CHECK_ATTEMPTS - 1) {
+                delay(CONNECTION_CHECK_RETRY_DELAY_MS)
             }
-        }.getOrNull()
+        }
+        null
+    }
+
+    private suspend fun checkConnectionOnce(location: LocationConfig): Long {
+        val port = allocateLocalPort()
+        val binary = DesktopNativeAssets.resolveOlcRtcBinary()
+        val ready = CompletableDeferred<Unit>()
+        val bypassActiveLinuxTun = DesktopPaths.os == DesktopOs.Linux && _status.value is VpnStatus.Connected
+        val checkProcess = startOlcRtcProcess(
+            binary = binary,
+            location = location,
+            socksPort = port,
+            ready = ready,
+            logOutput = false,
+            privileged = bypassActiveLinuxTun
+        )
+        val startedAt = System.currentTimeMillis()
+        try {
+            waitForOlcRtcReady(checkProcess, ready, port)
+            return System.currentTimeMillis() - startedAt
+        } finally {
+            stopProcess(checkProcess)
+        }
     }
 
     fun close() {
@@ -303,11 +316,6 @@ class DesktopVpnManager private constructor(
         }.isSuccess
     }
 
-    private fun measureTcpConnect(port: Int): Long? {
-        val startedAt = System.currentTimeMillis()
-        return if (canConnectToSocks(port)) System.currentTimeMillis() - startedAt else null
-    }
-
     private fun allocateLocalPort(): Int {
         return ServerSocket(0).use { it.localPort }
     }
@@ -336,6 +344,8 @@ class DesktopVpnManager private constructor(
     private companion object {
         const val MAX_LOG_ENTRIES = 5_000
         const val OLC_READY_TIMEOUT_MS = 25_000L
+        const val CONNECTION_CHECK_ATTEMPTS = 2
+        const val CONNECTION_CHECK_RETRY_DELAY_MS = 250L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L

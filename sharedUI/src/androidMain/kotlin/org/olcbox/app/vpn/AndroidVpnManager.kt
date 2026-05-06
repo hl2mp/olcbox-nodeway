@@ -197,10 +197,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.check(
-            locationConfig = locationConfig,
-            isVpnAlreadyRunning = OlcboxVpnState.isConnected.value
-        )
+        return OlcRtcConnectionChecker.check(locationConfig)
     }
 
     private suspend fun ensureProxySettings() {

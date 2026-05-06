@@ -94,7 +94,6 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 ## Notes
 
 - Android native ABIs: `arm64-v8a`, `x86_64`.
-- Android proxy mode listens on `127.0.0.1:10808` with generated SOCKS5 credentials.
 - Android release builds require `keystore.properties` in the repository root.
 - macOS DMG output is not notarized unless signing/notarization is configured separately.
 - Windows installers must be built on Windows with `jpackage` and WiX available.

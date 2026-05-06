@@ -43,15 +43,6 @@
             android:excludeFromRecents="true"
             android:exported="false" />
 
-        <receiver
-            android:name=".DebugVpnControlReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="org.olcbox.app.DEBUG_START_VPN" />
-                <action android:name="org.olcbox.app.DEBUG_STOP_VPN" />
-            </intent-filter>
-        </receiver>
-
         <service
             android:name="org.olcbox.app.vpn.service.OlcboxVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"

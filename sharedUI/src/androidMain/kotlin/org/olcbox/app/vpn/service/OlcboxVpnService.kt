@@ -23,8 +23,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -43,6 +45,14 @@ import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
+import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
+import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
+import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS
+import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PASSWORD
+import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PORT
+import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME
+import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -92,6 +102,16 @@ class OlcboxVpnService : VpnService() {
     private var splitTunnelProxyApps = emptySet<String>()
     private var splitTunnelBypassApps = emptySet<String>()
     private var socksProxy: AuthenticatedSocksProxy? = null
+
+    private data class StartOptions(
+        val connectionMode: AndroidConnectionMode,
+        val socksListenPort: Int,
+        val socksUsername: String,
+        val socksPassword: String,
+        val splitTunnelMode: AndroidSplitTunnelMode,
+        val splitTunnelProxyApps: Set<String>,
+        val splitTunnelBypassApps: Set<String>
+    )
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -177,24 +197,7 @@ class OlcboxVpnService : VpnService() {
             }
         }
 
-        connectionMode = AndroidConnectionMode.fromValue(
-            intent.getStringExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE)
-        )
-        socksListenPort = AndroidSocksProxySettings.sanitizePort(
-            intent.getIntExtra(
-                OlcboxVpnActions.EXTRA_SOCKS_PORT,
-                AndroidSocksProxySettings.DEFAULT_PORT
-            )
-        )
-        socksUsername = intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME)
-            ?.takeIf { it.isNotBlank() }
-            .orEmpty()
-        socksPassword = intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD).orEmpty()
-        splitTunnelMode = AndroidSplitTunnelMode.fromValue(
-            intent.getStringExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_MODE)
-        )
-        splitTunnelProxyApps = intent.getStringSetExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_PROXY_APPS)
-        splitTunnelBypassApps = intent.getStringSetExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_BYPASS_APPS)
+        applyStartOptions(loadStartOptions(intent))
         startForeground(
             if (connectionMode == AndroidConnectionMode.Proxy) {
                 "Starting proxy..."
@@ -206,7 +209,7 @@ class OlcboxVpnService : VpnService() {
         registerNetworkMonitor()
         updateUnderlyingNetwork(findActiveUpstreamNetwork())
         startTunnel(isMigration = false)
-        return START_STICKY
+        return START_REDELIVER_INTENT
     }
 
     override fun onDestroy() {
@@ -237,6 +240,71 @@ class OlcboxVpnService : VpnService() {
                 handleRtcLine(line)
             }
         })
+    }
+
+    private fun loadStartOptions(intent: Intent): StartOptions {
+        val preferences = runCatching {
+            runBlocking { applicationContext.vpnPrefDataStore.data.first() }
+        }.getOrNull()
+
+        val socksPort = if (intent.hasExtra(OlcboxVpnActions.EXTRA_SOCKS_PORT)) {
+            intent.getIntExtra(
+                OlcboxVpnActions.EXTRA_SOCKS_PORT,
+                AndroidSocksProxySettings.DEFAULT_PORT
+            )
+        } else {
+            preferences?.get(KEY_ANDROID_SOCKS_PORT)
+        }
+
+        return StartOptions(
+            connectionMode = AndroidConnectionMode.fromValue(
+                intent.getStringExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE)
+                    ?: preferences?.get(KEY_ANDROID_CONNECTION_MODE)
+            ),
+            socksListenPort = AndroidSocksProxySettings.sanitizePort(socksPort),
+            socksUsername = (
+                intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME)
+                    ?: preferences?.get(KEY_ANDROID_SOCKS_USERNAME)
+                ).orEmpty().takeIf { it.isNotBlank() }.orEmpty(),
+            socksPassword = (
+                intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD)
+                    ?: preferences?.get(KEY_ANDROID_SOCKS_PASSWORD)
+                ).orEmpty(),
+            splitTunnelMode = AndroidSplitTunnelMode.fromValue(
+                intent.getStringExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_MODE)
+                    ?: preferences?.get(KEY_ANDROID_SPLIT_TUNNEL_MODE)
+            ),
+            splitTunnelProxyApps = intent.stringCollectionExtra(
+                OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_PROXY_APPS
+            ) ?: preferences?.get(KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS).orEmpty(),
+            splitTunnelBypassApps = intent.stringCollectionExtra(
+                OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_BYPASS_APPS
+            ) ?: preferences?.get(KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS).orEmpty()
+        )
+    }
+
+    private fun applyStartOptions(options: StartOptions) {
+        connectionMode = options.connectionMode
+        socksListenPort = options.socksListenPort
+        socksUsername = options.socksUsername
+        socksPassword = options.socksPassword
+        splitTunnelMode = options.splitTunnelMode
+        splitTunnelProxyApps = options.splitTunnelProxyApps
+        splitTunnelBypassApps = options.splitTunnelBypassApps
+    }
+
+    private fun Intent.stringCollectionExtra(key: String): Set<String>? {
+        @Suppress("DEPRECATION")
+        val value = extras?.get(key) ?: return null
+        val items = when (value) {
+            is ArrayList<*> -> value.asSequence()
+            is Set<*> -> value.asSequence()
+            is Array<*> -> value.asSequence()
+            else -> return emptySet()
+        }
+        return items
+            .mapNotNull { (it as? String)?.trim()?.takeIf { item -> item.isNotBlank() } }
+            .toSet()
     }
 
     private fun startTunnel(
@@ -1212,13 +1280,4 @@ class OlcboxVpnService : VpnService() {
             OlcboxVpnState.addLog(msg)
         }
     }
-}
-
-private fun Intent.getStringSetExtra(name: String): Set<String> {
-    return getStringArrayListExtra(name)
-        ?.asSequence()
-        ?.map { it.trim() }
-        ?.filter { it.isNotBlank() }
-        ?.toSet()
-        .orEmpty()
 }
