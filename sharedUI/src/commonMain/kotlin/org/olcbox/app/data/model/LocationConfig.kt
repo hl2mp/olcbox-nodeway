@@ -238,6 +238,81 @@ data class LocationEndpointConfig(
 )
 
 @Serializable
+data class SubscriptionMetadata(
+    val name: String? = null,
+    val update: String? = null,
+    val refresh: String? = null,
+    val color: String? = null,
+    val icon: String? = null,
+    val used: String? = null,
+    val available: String? = null
+) {
+    fun normalized(): SubscriptionMetadata {
+        return copy(
+            name = name.cleanMetadataValue(),
+            update = update.cleanMetadataValue(),
+            refresh = refresh.cleanMetadataValue(),
+            color = color.cleanMetadataValue(),
+            icon = icon.cleanMetadataValue(),
+            used = used.cleanMetadataValue(),
+            available = available.cleanMetadataValue()
+        )
+    }
+
+    fun isEmpty(): Boolean {
+        return name.isNullOrBlank() &&
+                update.isNullOrBlank() &&
+                refresh.isNullOrBlank() &&
+                color.isNullOrBlank() &&
+                icon.isNullOrBlank() &&
+                used.isNullOrBlank() &&
+                available.isNullOrBlank()
+    }
+}
+
+@Serializable
+data class LocationMetadata(
+    val name: String? = null,
+    val color: String? = null,
+    val icon: String? = null,
+    val used: String? = null,
+    val available: String? = null,
+    val ip: String? = null,
+    val comment: String? = null,
+    val mimo: String? = null,
+    val subscription: SubscriptionMetadata? = null
+) {
+    fun normalized(): LocationMetadata {
+        val normalizedSubscription = subscription
+            ?.normalized()
+            ?.takeUnless { it.isEmpty() }
+        return copy(
+            name = name.cleanMetadataValue(),
+            color = color.cleanMetadataValue(),
+            icon = icon.cleanMetadataValue(),
+            used = used.cleanMetadataValue(),
+            available = available.cleanMetadataValue(),
+            ip = ip.cleanMetadataValue(),
+            comment = comment.cleanMetadataValue(),
+            mimo = mimo.cleanMetadataValue(),
+            subscription = normalizedSubscription
+        )
+    }
+
+    fun isEmpty(): Boolean {
+        return name.isNullOrBlank() &&
+                color.isNullOrBlank() &&
+                icon.isNullOrBlank() &&
+                used.isNullOrBlank() &&
+                available.isNullOrBlank() &&
+                ip.isNullOrBlank() &&
+                comment.isNullOrBlank() &&
+                mimo.isNullOrBlank() &&
+                (subscription == null || subscription.isEmpty())
+    }
+}
+
+@Serializable
 data class LocationEntry(
     @SerialName("storage_id")
     val storageId: String,
@@ -247,6 +322,7 @@ data class LocationEntry(
     val endpoint: LocationEndpointConfig? = null,
     val carrier: String? = null,
     val transport: LocationTransportConfig? = null,
+    val metadata: LocationMetadata? = null,
     @SerialName("subscriptionUrl")
     val legacySubscriptionUrl: String? = null,
     @SerialName("id")
@@ -326,7 +402,10 @@ data class LocationEntry(
                 key = config.key
             ),
             carrier = config.bypassProvider,
-            transport = LocationTransportConfig.from(config)
+            transport = LocationTransportConfig.from(config),
+            metadata = metadata
+                ?.normalized()
+                ?.takeUnless { it.isEmpty() }
         )
     }
 
@@ -334,7 +413,8 @@ data class LocationEntry(
         fun from(
             storageId: String,
             location: LocationConfig,
-            subscriptionUrl: String? = null
+            subscriptionUrl: String? = null,
+            metadata: LocationMetadata? = null
         ): LocationEntry {
             val config = location.normalized()
             return LocationEntry(
@@ -347,7 +427,8 @@ data class LocationEntry(
                     key = config.key
                 ),
                 carrier = config.bypassProvider,
-                transport = LocationTransportConfig.from(config)
+                transport = LocationTransportConfig.from(config),
+                metadata = metadata
             ).normalized()
         }
 
@@ -355,6 +436,10 @@ data class LocationEntry(
             return values.firstOrNull { !it.isNullOrBlank() } ?: ""
         }
     }
+}
+
+private fun String?.cleanMetadataValue(): String? {
+    return this?.trim()?.takeIf { it.isNotEmpty() }
 }
 
 @Serializable

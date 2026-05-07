@@ -76,7 +76,8 @@ class HomeScreenViewModel(
                 storageId = active.storageId,
                 fullName = normalized.displayName(),
                 config = normalized,
-                subscriptionUrl = active.subscriptionUrl
+                subscriptionUrl = active.subscriptionUrl,
+                metadata = active.metadata
             )
 
             _state.update {

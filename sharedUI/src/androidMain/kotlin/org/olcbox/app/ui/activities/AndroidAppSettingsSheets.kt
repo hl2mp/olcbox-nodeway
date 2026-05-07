@@ -40,12 +40,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -101,6 +104,7 @@ internal fun AppSettingsSheet(
     enabled: Boolean,
     isConnectionActive: Boolean,
     onDismiss: () -> Unit,
+    onCopyConfigClick: () -> Unit,
     onSaveLogsClick: () -> Unit,
     onModeSelected: (AndroidConnectionMode) -> Unit,
     onProxySettingsSaved: (String, String, Int) -> Unit,
@@ -182,6 +186,7 @@ internal fun AppSettingsSheet(
                     onConnectionModeClick = { route = AppSettingsRoute.ConnectionMode },
                     onProxySettingsClick = { route = AppSettingsRoute.SocksProxy },
                     onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling },
+                    onCopyConfigClick = onCopyConfigClick,
                     onApplicationLogsClick = { route = AppSettingsRoute.ApplicationLogs }
                 )
 
@@ -239,6 +244,7 @@ private fun AppSettingsHubContent(
     onConnectionModeClick: () -> Unit,
     onProxySettingsClick: () -> Unit,
     onSplitTunnelingClick: () -> Unit,
+    onCopyConfigClick: () -> Unit,
     onApplicationLogsClick: () -> Unit
 ) {
     Column(
@@ -276,6 +282,14 @@ private fun AppSettingsHubContent(
                 icon = Icons.Outlined.Apps,
                 enabled = enabled,
                 onClick = onSplitTunnelingClick
+            )
+            SettingsNavigationRow(
+                title = "Copy Current Config",
+                value = "Export to clipboard",
+                icon = Icons.Outlined.ContentPaste,
+                enabled = true,
+                showChevron = false,
+                onClick = onCopyConfigClick
             )
             SettingsNavigationRow(
                 title = "Application Logs",
@@ -356,14 +370,13 @@ private fun SocksProxySettingsContent(
     ) {
         SettingsDetailHeader(
             title = "SOCKS5 Proxy",
-            subtitle = "${proxySettings.host}:${proxySettings.port}",
+            subtitle = proxySettings.host,
             onBack = onBack
         )
 
         Spacer(Modifier.height(20.dp))
 
-        SocksProxySettingsCard(
-            settings = proxySettings,
+        SocksProxySettingsForm(
             port = editedPort,
             username = editedUsername,
             password = editedPassword,
@@ -598,6 +611,7 @@ private fun SettingsNavigationRow(
     value: String,
     icon: ImageVector,
     enabled: Boolean,
+    showChevron: Boolean = true,
     onClick: () -> Unit
 ) {
     Surface(
@@ -647,12 +661,14 @@ private fun SettingsNavigationRow(
                 )
             }
 
-            Icon(
-                imageVector = Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
+            if (showChevron) {
+                Icon(
+                    imageVector = Icons.Rounded.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }
@@ -983,8 +999,9 @@ private fun SplitTunnelStatusCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -993,8 +1010,8 @@ private fun SplitTunnelStatusCard(
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             ) {
                 Icon(
                     imageVector = settings.mode.icon(),
@@ -1016,7 +1033,7 @@ private fun SplitTunnelStatusCard(
                 Text(
                     text = splitTunnelStatusSubtitle(selectedMode, isConnectionActive),
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.76f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1097,8 +1114,7 @@ private fun SplitTunnelAppListAction(
 }
 
 @Composable
-private fun SocksProxySettingsCard(
-    settings: AndroidSocksProxySettings,
+private fun SocksProxySettingsForm(
     port: String,
     username: String,
     password: String,
@@ -1115,142 +1131,124 @@ private fun SocksProxySettingsCard(
     onSaveSettings: () -> Unit,
     onRegeneratePassword: () -> Unit
 ) {
-    Surface(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    modifier = Modifier.size(40.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Public,
-                        contentDescription = null,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SettingsSectionLabel("Endpoint")
 
-                Spacer(Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${settings.host}:${settings.port}",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "User: ${settings.username}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            OutlinedTextField(
+            SocksProxyTextField(
                 value = port,
                 onValueChange = onPortChanged,
-                modifier = Modifier.fillMaxWidth(),
+                label = "Port",
+                placeholder = AndroidSocksProxySettings.DEFAULT_PORT.toString(),
                 enabled = enabled,
-                label = { Text("Port") },
-                singleLine = true,
                 isError = port.isBlank() || !portValid,
+                leadingIcon = Icons.Rounded.Public,
+                supportingText = when {
+                    port.isBlank() -> "Port is required"
+                    !portValid -> "Use ${AndroidSocksProxySettings.MIN_PORT}-${AndroidSocksProxySettings.MAX_PORT}"
+                    portChanged && isConnectionActive -> "Saving restarts the active connection"
+                    portChanged -> "Unsaved change"
+                    else -> null
+                },
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Next
-                ),
-                supportingText = {
-                    Text(
-                        text = when {
-                            port.isBlank() -> "Port is required"
-                            !portValid -> "Use a port from ${AndroidSocksProxySettings.MIN_PORT} to ${AndroidSocksProxySettings.MAX_PORT}"
-                            portChanged && isConnectionActive -> "Saving restarts the active connection"
-                            portChanged -> "Unsaved change"
-                            else -> "Local SOCKS5 listen port"
-                        }
-                    )
-                }
+                )
             )
+        }
 
-            Spacer(Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SettingsSectionLabel("Credentials")
 
-            OutlinedTextField(
+            SocksProxyTextField(
                 value = username,
                 onValueChange = onUsernameChanged,
-                modifier = Modifier.fillMaxWidth(),
+                label = "Username",
+                placeholder = "olcbox...",
                 enabled = enabled,
-                label = { Text("Username") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                supportingText = {
-                    Text(
-                        text = when {
-                            username.isBlank() -> "Username is required"
-                            usernameChanged && isConnectionActive -> "Saving restarts the active connection"
-                            usernameChanged -> "Unsaved change"
-                            else -> "Generated by default for SOCKS5 clients"
-                        }
-                    )
-                }
+                isError = username.isBlank(),
+                leadingIcon = Icons.Rounded.Person,
+                supportingText = when {
+                    username.isBlank() -> "Username is required"
+                    usernameChanged && isConnectionActive -> "Saving restarts the active connection"
+                    usernameChanged -> "Unsaved change"
+                    else -> null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
 
-            Spacer(Modifier.height(8.dp))
-
-            OutlinedTextField(
+            SocksProxyTextField(
                 value = password,
                 onValueChange = onPasswordChanged,
-                modifier = Modifier.fillMaxWidth(),
+                label = "Password",
+                placeholder = "Generated password",
                 enabled = enabled,
-                label = { Text("Password") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                supportingText = {
-                    Text(
-                        text = when {
-                            password.isBlank() -> "Password is required"
-                            passwordChanged && isConnectionActive -> "Saving restarts the active connection"
-                            passwordChanged -> "Unsaved change"
-                            else -> "Required by default for SOCKS5 clients"
-                        }
-                    )
-                }
+                isError = password.isBlank(),
+                leadingIcon = Icons.Rounded.Key,
+                supportingText = when {
+                    password.isBlank() -> "Password is required"
+                    passwordChanged && isConnectionActive -> "Saving restarts the active connection"
+                    passwordChanged -> "Unsaved change"
+                    else -> null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
             )
+        }
 
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                enabled = enabled,
+                onClick = onRegeneratePassword
             ) {
-                TextButton(
-                    enabled = enabled,
-                    onClick = onRegeneratePassword
-                ) {
-                    Text("Regenerate")
-                }
+                Text("Regenerate password")
+            }
 
+            Spacer(Modifier.width(8.dp))
+
+            Button(
+                enabled = canSave,
+                onClick = onSaveSettings
+            ) {
+                Icon(Icons.Rounded.Check, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-
-                Button(
-                    enabled = canSave,
-                    onClick = onSaveSettings
-                ) {
-                    Text("Save")
-                }
+                Text("Save")
             }
         }
     }
+}
+
+@Composable
+private fun SocksProxyTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    enabled: Boolean,
+    isError: Boolean,
+    leadingIcon: ImageVector,
+    supportingText: String?,
+    keyboardOptions: KeyboardOptions
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled,
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        singleLine = true,
+        isError = isError,
+        leadingIcon = { Icon(leadingIcon, contentDescription = null) },
+        supportingText = supportingText?.let { { Text(it) } },
+        keyboardOptions = keyboardOptions
+    )
 }
 
 @Composable

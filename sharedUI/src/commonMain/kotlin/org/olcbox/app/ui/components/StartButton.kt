@@ -37,27 +37,35 @@ fun StartButton(
     modifier: Modifier = Modifier,
     isActive: Boolean,
     isLoading: Boolean,
+    requiresSetup: Boolean = false,
+    label: String? = null,
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     val mainButtonColor by animateColorAsState(
-        targetValue = if (isActive) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.primaryContainer,
+        targetValue = when {
+            isActive -> MaterialTheme.colorScheme.primary
+            requiresSetup -> MaterialTheme.colorScheme.primaryContainer
+            else -> MaterialTheme.colorScheme.primaryContainer
+        },
         label = "buttonColor"
     )
 
-    val contentColor = if (isActive) {
-        MaterialTheme.colorScheme.onPrimary
-    } else {
-        MaterialTheme.colorScheme.onPrimaryContainer
+    val contentColor = when {
+        isActive -> MaterialTheme.colorScheme.onPrimary
+        requiresSetup -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.onPrimaryContainer
     }
 
     Box(
         modifier = modifier
             .size(200.dp)
             .background(
-                color = if (isActive) MaterialTheme.colorScheme.secondaryContainer
-                else MaterialTheme.colorScheme.surfaceContainer,
+                color = when {
+                    isActive -> MaterialTheme.colorScheme.secondaryContainer
+                    requiresSetup -> MaterialTheme.colorScheme.surfaceContainer
+                    else -> MaterialTheme.colorScheme.surfaceContainer
+                },
                 shape = CircleShape
             )
             .padding(8.dp)
@@ -92,10 +100,10 @@ fun StartButton(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = when {
+                text = label ?: when {
                     isLoading -> "STOP"
                     isActive -> "STOP"
-                    !enabled -> "SETUP"
+                    requiresSetup -> "SETUP"
                     else -> "START"
                 },
                 color = contentColor.copy(alpha = if (!enabled) 0.7f else 1f),

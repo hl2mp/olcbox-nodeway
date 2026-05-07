@@ -153,12 +153,15 @@ class LocationsRepositoryImplTest {
 
         val imported = source.stored
         assertNotNull(imported)
-        val location = imported.locations.single().location
+        val entry = imported.locations.single()
+        val location = entry.location
         assertEquals(LocationConfig.PROVIDER_WB_STREAM, location.bypassProvider)
         assertEquals(LocationConfig.TRANSPORT_SEICHANNEL, location.transport)
         assertEquals("room-01", location.id)
         assertEquals("android-01", location.clientId)
         assertEquals("RU / olc free sub / IPv6", location.name)
+        assertEquals("RU / olc free sub / IPv6", entry.metadata?.mimo)
+        assertNull(entry.metadata?.subscription)
     }
 
     @Test
@@ -166,10 +169,20 @@ class LocationsRepositoryImplTest {
         val source = FakeLocationsDataSource()
         val input = """
             #name: Test subscription
+            #update: 1778011200
             #refresh: 10m
+            #color: #4A90E2
+            #icon: flag-ru
+            #used: 10mb/10gb
+            #available: 9.99gb
 
             olcrtc://wbstream?seichannel@room-01#${"a".repeat(64)}%android-01${'$'}RU / default name
             ##name: RU-1
+            ##color: #4A90E2
+            ##icon: node-ru
+            ##used: 500mb/10gb
+            ##available: 9.5gb
+            ##ip: 203.0.113.10
             ##comment: primary
 
             olcrtc://jazz?datachannel@room-02#${"b".repeat(64)}%android-02${'$'}DE / backup
@@ -183,6 +196,101 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf("RU-1", "DE-Backup"), imported.locations.map { it.location.name })
         assertEquals(listOf("android-01", "android-02"), imported.locations.map { it.location.clientId })
         assertEquals("imported_ru-1", imported.activeLocationId)
+
+        val firstMetadata = imported.locations[0].metadata
+        assertNotNull(firstMetadata)
+        assertEquals("RU-1", firstMetadata.name)
+        assertEquals("#4A90E2", firstMetadata.color)
+        assertEquals("node-ru", firstMetadata.icon)
+        assertEquals("500mb/10gb", firstMetadata.used)
+        assertEquals("9.5gb", firstMetadata.available)
+        assertEquals("203.0.113.10", firstMetadata.ip)
+        assertEquals("primary", firstMetadata.comment)
+        assertEquals("RU / default name", firstMetadata.mimo)
+
+        val subscriptionMetadata = firstMetadata.subscription
+        assertNotNull(subscriptionMetadata)
+        assertEquals("Test subscription", subscriptionMetadata.name)
+        assertEquals("1778011200", subscriptionMetadata.update)
+        assertEquals("10m", subscriptionMetadata.refresh)
+        assertEquals("#4A90E2", subscriptionMetadata.color)
+        assertEquals("flag-ru", subscriptionMetadata.icon)
+        assertEquals("10mb/10gb", subscriptionMetadata.used)
+        assertEquals("9.99gb", subscriptionMetadata.available)
+        assertEquals(subscriptionMetadata, imported.locations[1].metadata?.subscription)
+    }
+
+    fun importUpdatesMatchingStorageIdsAndAppendsNewLocations() = runTest {
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "custom_paris",
+                locations = listOf(
+                    LocationEntry.from(
+                        "custom_paris",
+                        LocationConfig(
+                            name = "Paris",
+                            id = "room-old",
+                            key = "a".repeat(64),
+                            bypassProvider = LocationConfig.PROVIDER_WB_STREAM
+                        )
+                    ),
+                    LocationEntry.from(
+                        "custom_berlin",
+                        LocationConfig(
+                            name = "Berlin",
+                            id = "room-berlin",
+                            key = "b".repeat(64),
+                            bypassProvider = LocationConfig.PROVIDER_TELEMOST
+                        )
+                    )
+                )
+            )
+        )
+        val input = """
+            {
+              "version": 4,
+              "active_location_id": "sub_wb",
+              "locations": [
+                {
+                  "storage_id": "custom_paris",
+                  "name": "Paris updated",
+                  "endpoint": {
+                    "room_id": "room-new",
+                    "key": "${"c".repeat(64)}",
+                    "client_id": "phone-1"
+                  },
+                  "carrier": "wbstream",
+                  "transport": {
+                    "type": "datachannel"
+                  }
+                },
+                {
+                  "storage_id": "sub_wb",
+                  "name": "WB sub",
+                  "subscription_url": "https://example.com/sub.md",
+                  "endpoint": {
+                    "room_id": "room-sub",
+                    "key": "${"d".repeat(64)}",
+                    "client_id": "phone-2"
+                  },
+                  "carrier": "wbstream",
+                  "transport": {
+                    "type": "vp8channel"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(listOf("custom_paris", "custom_berlin", "sub_wb"), imported.locations.map { it.storageId })
+        assertEquals("room-new", imported.locations[0].location.id)
+        assertEquals("room-berlin", imported.locations[1].location.id)
+        assertEquals("https://example.com/sub.md", imported.locations[2].subscriptionUrl)
+        assertEquals("sub_wb", imported.activeLocationId)
     }
 
     @Test

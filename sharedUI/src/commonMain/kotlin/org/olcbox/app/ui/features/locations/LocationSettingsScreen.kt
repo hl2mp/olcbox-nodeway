@@ -144,7 +144,7 @@ fun LocationSettingsScreen(
                     value = name,
                     onValueChange = viewModel::onNameChanged,
                     label = "Name",
-                    placeholder = "WB backup",
+                    placeholder = "Location name",
                     enabled = !isSaving,
                     isError = viewModel.nameError != null,
                     supportingText = viewModel.nameError,

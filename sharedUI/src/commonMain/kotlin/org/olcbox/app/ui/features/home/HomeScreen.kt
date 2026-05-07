@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.olcbox.app.ui.components.StartButton
+import org.olcbox.app.ui.features.home.components.AddConfigurationSheet
 import org.olcbox.app.ui.features.home.components.HomeScreenAppBar
 import org.olcbox.app.ui.features.home.components.LocationSelectorScreen
 import org.olcbox.app.ui.features.home.components.LogsSheet
@@ -38,19 +39,42 @@ fun HomeScreen(
     onToggleClick: () -> Unit = { viewModel.ToggleVpn() },
     onImportFileRequested: () -> Unit = {},
     onImportFromClipboardRequested: () -> Unit = { /* ... */ },
+    onScanQrRequested: () -> Unit = {},
     onCopyConfigRequested: () -> Unit = { viewModel.onCopyFullConfigClicked() },
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
     showAppSettingsButton: Boolean = false,
+    canScanQr: Boolean = false,
     onAppSettingsClick: () -> Unit = {},
     onOpenLocationSettings: (String?) -> Unit,
     onAddLocation: () -> Unit
 ) {
     var isLogsSheetOpen by remember { mutableStateOf(false) }
+    var isAddSheetOpen by remember { mutableStateOf(false) }
 
     val state by viewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val pingsState = locationViewModel.pingsState
+    val hasSubscriptions = locationViewModel.locations.any { !it.subscriptionUrl.isNullOrBlank() }
+    val requiresSetup = !state.canStartVpn && !state.isVpnConnected && !state.isVpnLoading
+    val primaryActionLabel = when {
+        requiresSetup -> "SETUP"
+        state.isVpnLoading || state.isVpnConnected -> "STOP"
+        else -> "START"
+    }
+
+    fun refreshSubscriptions() {
+        viewModel.refreshSubscriptions { updatedCount ->
+            locationViewModel.loadLocations()
+            viewModel.restartVpnIfRunning()
+            val message = if (updatedCount > 0) {
+                "Subscriptions updated: $updatedCount"
+            } else {
+                "No subscriptions to update"
+            }
+            scope.launch { snackbarHostState.showSnackbar(message) }
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -59,28 +83,7 @@ fun HomeScreen(
                 onHistoryClick = { isLogsSheetOpen = true },
                 showAppSettingsButton = showAppSettingsButton,
                 onAppSettingsClick = onAppSettingsClick,
-                onImportFileClick = onImportFileRequested,
-                onImportClipboardClick = {
-                    onImportFromClipboardRequested()
-                    scope.launch { snackbarHostState.showSnackbar("Imported from clipboard") }
-                },
-                onExportClipboardClick = {
-                    onCopyConfigRequested()
-                    scope.launch { snackbarHostState.showSnackbar("Config copied") }
-                },
-                hasSubscriptions = locationViewModel.locations.any { !it.subscriptionUrl.isNullOrBlank() },
-                onRefreshSubscriptionsClick = {
-                    viewModel.refreshSubscriptions { updatedCount ->
-                        locationViewModel.loadLocations()
-                        viewModel.restartVpnIfRunning()
-                        val message = if (updatedCount > 0) {
-                            "Subscriptions updated: $updatedCount"
-                        } else {
-                            "No subscriptions to update"
-                        }
-                        scope.launch { snackbarHostState.showSnackbar(message) }
-                    }
-                }
+                onAddClick = { isAddSheetOpen = true }
             )
         }
     ) { innerPadding ->
@@ -92,14 +95,25 @@ fun HomeScreen(
                 .padding(horizontal = 32.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            RelayStatus(isActive = state.isVpnConnected)
+            RelayStatus(
+                isActive = state.isVpnConnected,
+                requiresSetup = requiresSetup
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
             StartButton(
                 isActive = state.isVpnConnected,
                 isLoading = state.isVpnLoading,
-                enabled = state.isVpnLoading || state.isVpnConnected || state.canStartVpn,
-                onClick = { onToggleClick() }
+                requiresSetup = requiresSetup,
+                label = primaryActionLabel,
+                enabled = true,
+                onClick = {
+                    if (requiresSetup) {
+                        isAddSheetOpen = true
+                    } else {
+                        onToggleClick()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -110,6 +124,7 @@ fun HomeScreen(
                         locationViewModel.refreshPings { viewModel.checkConnectionFor(it) }
                     }
                 },
+                onAddSubscriptionClick = { isAddSheetOpen = true },
                 locations = locationViewModel.locations,
                 selectedLocationId = locationViewModel.selectedLocationId,
                 pingsState = pingsState,
@@ -141,6 +156,35 @@ fun HomeScreen(
                     )
                 },
                 onDismiss = { isLogsSheetOpen = false }
+            )
+        }
+
+        if (isAddSheetOpen) {
+            AddConfigurationSheet(
+                canScanQr = canScanQr,
+                hasSubscriptions = hasSubscriptions,
+                onDismiss = { isAddSheetOpen = false },
+                onScanQrClick = {
+                    isAddSheetOpen = false
+                    onScanQrRequested()
+                },
+                onPasteLinkClick = {
+                    isAddSheetOpen = false
+                    onImportFromClipboardRequested()
+                    scope.launch { snackbarHostState.showSnackbar("Imported from clipboard") }
+                },
+                onImportFileClick = {
+                    isAddSheetOpen = false
+                    onImportFileRequested()
+                },
+                onUpdateSubscriptionsClick = {
+                    isAddSheetOpen = false
+                    refreshSubscriptions()
+                },
+                onAddCustomLocationClick = {
+                    isAddSheetOpen = false
+                    onAddLocation()
+                }
             )
         }
     }

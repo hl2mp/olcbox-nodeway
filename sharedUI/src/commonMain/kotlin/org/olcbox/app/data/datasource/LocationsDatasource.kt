@@ -18,6 +18,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.repository.LocationsRepository
 
 interface LocationsDataSource {
@@ -46,6 +48,11 @@ class LocationsRepositoryImpl(
     private data class ImportSource(
         val content: String,
         val subscriptionUrl: String? = null
+    )
+
+    private data class ParsedOlcRtcUri(
+        val location: LocationConfig,
+        val mimo: String? = null
     )
 
 
@@ -79,7 +86,11 @@ class LocationsRepositoryImpl(
     override suspend fun importText(text: String) {
         val source = resolveImportSource(text.trim()) ?: return
         val parsed = parseImport(source.content.trim(), source.subscriptionUrl) ?: return
-        dataSource.saveLocationBundle(parsed.normalized())
+        val merged = mergeImportedBundle(
+            current = dataSource.loadLocationBundle(),
+            imported = parsed.normalized()
+        )
+        dataSource.saveLocationBundle(merged.normalized())
     }
 
     override suspend fun refreshSubscriptions(): Int {
@@ -91,7 +102,6 @@ class LocationsRepositoryImpl(
             .groupBy({ it.first }, { it.second })
         if (groupedByUrl.isEmpty()) return 0
 
-        var updatedCount = 0
         val nonSubscriptionLocations = bundle.locations.filter { it.subscriptionUrl.isNullOrBlank() }.toMutableList()
         val usedStorageIds = nonSubscriptionLocations.mapTo(mutableSetOf()) { it.storageId }
         val activeBefore = bundle.activeLocationId
@@ -102,7 +112,6 @@ class LocationsRepositoryImpl(
             val refreshed = parseImport(source.content, url)?.locations.orEmpty()
             if (refreshed.isEmpty()) return@forEach
 
-            updatedCount += refreshed.size
             val reusedBySignature = previousEntries
                 .groupBy { subscriptionSignature(it.location) }
                 .mapValues { (_, entries) -> entries.toMutableList() }
@@ -130,7 +139,7 @@ class LocationsRepositoryImpl(
             nonSubscriptionLocations += reassigned
         }
 
-        if (updatedCount == 0) return 0
+        if (groupedByUrl.isEmpty()) return 0
 
         dataSource.saveLocationBundle(
             bundle.copy(
@@ -138,7 +147,7 @@ class LocationsRepositoryImpl(
                 locations = nonSubscriptionLocations
             ).normalized()
         )
-        return updatedCount
+        return groupedByUrl.size
     }
 
     override suspend fun saveLocation(storageId: String, location: LocationConfig) {
@@ -148,7 +157,8 @@ class LocationsRepositoryImpl(
         val entry = LocationEntry.from(
             storageId = normalizedId,
             location = location,
-            subscriptionUrl = current?.subscriptionUrl
+            subscriptionUrl = current?.subscriptionUrl,
+            metadata = current?.metadata
         )
         val locations = bundle.locations
             .filterNot { it.storageId == entry.storageId } + entry
@@ -265,6 +275,41 @@ class LocationsRepositoryImpl(
                 locations = listOf(it)
             )
         }
+    }
+
+    private fun mergeImportedBundle(
+        current: LocationBundleV4?,
+        imported: LocationBundleV4
+    ): LocationBundleV4 {
+        val currentBundle = current?.normalized()
+        if (currentBundle == null || currentBundle.locations.isEmpty()) {
+            return imported
+        }
+
+        val importedByStorageId = imported.locations.associateBy { it.storageId }
+        val existingStorageIds = currentBundle.locations.mapTo(mutableSetOf()) { it.storageId }
+
+        val mergedLocations = currentBundle.locations
+            .map { existing -> importedByStorageId[existing.storageId] ?: existing }
+            .toMutableList()
+
+        imported.locations.forEach { entry ->
+            if (entry.storageId !in existingStorageIds) {
+                mergedLocations += entry
+            }
+        }
+
+        val importedActive = imported.activeLocationId
+            ?.takeIf { id -> imported.locations.any { it.storageId == id } }
+
+        val active = importedActive
+            ?: currentBundle.activeLocationId?.takeIf { id -> mergedLocations.any { it.storageId == id } }
+            ?: mergedLocations.firstOrNull()?.storageId
+
+        return currentBundle.copy(
+            activeLocationId = active,
+            locations = mergedLocations
+        )
     }
 
     private fun parseBundle(root: JsonObject, subscriptionUrl: String? = null): LocationBundleV4? {
@@ -404,7 +449,9 @@ class LocationsRepositoryImpl(
     private fun parseOlcRtcText(text: String, subscriptionUrl: String? = null): LocationBundleV4? {
         if (!text.contains(OLCRTC_URI_PREFIX)) return null
 
-        val locations = mutableListOf<LocationConfig>()
+        val subscriptionFields = linkedMapOf<String, String>()
+        val locations = mutableListOf<Pair<ParsedOlcRtcUri, MutableMap<String, String>>>()
+        var localFields: MutableMap<String, String>? = null
 
         text.lineSequence()
             .map { it.trim() }
@@ -412,7 +459,11 @@ class LocationsRepositoryImpl(
             .forEach { line ->
                 when {
                     line.startsWith(OLCRTC_URI_PREFIX) -> {
-                        parseOlcRtcUri(line)?.let { locations += it }
+                        parseOlcRtcUri(line)?.let { parsed ->
+                            val fields = linkedMapOf<String, String>()
+                            locations += parsed to fields
+                            localFields = fields
+                        }
                     }
 
                     line.startsWith("##") && locations.isNotEmpty() -> {
@@ -420,22 +471,45 @@ class LocationsRepositoryImpl(
                             line.removePrefix("##")
                         ) ?: return@forEach
 
-                        if (key == "name" && value.isNotBlank()) {
-                            val last = locations.last()
-                            locations[locations.lastIndex] = last.copy(name = value)
-                        }
+                        localFields?.set(key, value)
+                    }
+
+                    line.startsWith("#") -> {
+                        val (key, value) = parseSubscriptionField(
+                            line.removePrefix("#")
+                        ) ?: return@forEach
+
+                        subscriptionFields[key] = value
                     }
                 }
             }
 
         if (locations.isEmpty()) return null
 
+        val subscriptionMetadata = buildSubscriptionMetadata(subscriptionFields)
         val usedStorageIds = mutableSetOf<String>()
 
-        val entries = locations.mapIndexed { index, location ->
+        val entries = locations.mapIndexed { index, (parsed, fields) ->
+            val metadata = buildLocationMetadata(
+                fields = fields,
+                mimo = parsed.mimo,
+                subscription = subscriptionMetadata
+            )
+            val location = parsed.location.copy(
+                name = firstNotBlank(
+                    metadata?.name,
+                    parsed.mimo,
+                    parsed.location.name
+                )
+            ).normalized()
             val base = location.storageSlug().ifBlank { "location_${index + 1}" }
             val storageId = uniqueStorageId("imported_$base", usedStorageIds)
-            LocationEntry.from(storageId, location, subscriptionUrl = subscriptionUrl)
+            LocationEntry.from(
+                storageId = storageId,
+                location = location,
+                subscriptionUrl = subscriptionUrl,
+                metadata = metadata
+            )
         }
 
         return LocationBundleV4(
@@ -444,7 +518,7 @@ class LocationsRepositoryImpl(
         )
     }
 
-    private fun parseOlcRtcUri(line: String): LocationConfig? {
+    private fun parseOlcRtcUri(line: String): ParsedOlcRtcUri? {
         val payload = line.removePrefix(OLCRTC_URI_PREFIX)
 
         val transportMarker = payload.indexOf('?')
@@ -490,7 +564,39 @@ class LocationsRepositoryImpl(
             transport = transport
         ).normalized()
 
-        return location.takeIf { it.isComplete() }
+        return location
+            .takeIf { it.isComplete() }
+            ?.let { ParsedOlcRtcUri(it, mimo.takeIf { value -> value.isNotBlank() }) }
+    }
+
+    private fun buildSubscriptionMetadata(fields: Map<String, String>): SubscriptionMetadata? {
+        return SubscriptionMetadata(
+            name = fields["name"],
+            update = fields["update"],
+            refresh = fields["refresh"],
+            color = fields["color"],
+            icon = fields["icon"],
+            used = fields["used"],
+            available = fields["available"]
+        ).normalized().takeUnless { it.isEmpty() }
+    }
+
+    private fun buildLocationMetadata(
+        fields: Map<String, String>,
+        mimo: String?,
+        subscription: SubscriptionMetadata?
+    ): LocationMetadata? {
+        return LocationMetadata(
+            name = fields["name"],
+            color = fields["color"],
+            icon = fields["icon"],
+            used = fields["used"],
+            available = fields["available"],
+            ip = fields["ip"],
+            comment = fields["comment"],
+            mimo = mimo,
+            subscription = subscription
+        ).normalized().takeUnless { it.isEmpty() }
     }
 
     private fun parseSubscriptionField(value: String): Pair<String, String>? {

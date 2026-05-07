@@ -1,5 +1,6 @@
 package org.olcbox.app.ui.features.home.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -27,12 +29,50 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun RelayStatus(
     isActive: Boolean,
+    requiresSetup: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            isActive -> MaterialTheme.colorScheme.primaryContainer
+            requiresSetup -> MaterialTheme.colorScheme.surfaceContainerLow
+            else -> MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        label = "relayStatusContainer"
+    )
+    val iconContainerColor by animateColorAsState(
+        targetValue = when {
+            isActive -> MaterialTheme.colorScheme.primary
+            requiresSetup -> MaterialTheme.colorScheme.secondaryContainer
+            else -> MaterialTheme.colorScheme.secondaryContainer
+        },
+        label = "relayStatusIconContainer"
+    )
+    val iconContentColor = when {
+        isActive -> MaterialTheme.colorScheme.onPrimary
+        requiresSetup -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    val textColor = when {
+        isActive -> MaterialTheme.colorScheme.onPrimaryContainer
+        requiresSetup -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val title = when {
+        isActive -> "Relay Active"
+        requiresSetup -> "Relay Inactive"
+        else -> "Relay Inactive"
+    }
+    val subtitle = when {
+        isActive -> "Connected"
+        requiresSetup -> "No location selected"
+        else -> "Disconnected"
+    }
+
     Surface(
         modifier = modifier.width(272.dp),
         shape = RoundedCornerShape(16.dp),
-        color = if (isActive) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        color = containerColor,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
@@ -41,8 +81,8 @@ fun RelayStatus(
             Surface(
                 modifier = Modifier.size(48.dp),
                 shape = CircleShape,
-                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                color = iconContainerColor,
+                contentColor = iconContentColor
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -50,13 +90,13 @@ fun RelayStatus(
                 ) {
                     if (isActive) {
                         Icon(
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = iconContentColor,
                             imageVector = Icons.Rounded.VerifiedUser,
                             contentDescription = "Active"
                         )
                     } else {
                         Icon(
-                            tint = MaterialTheme.colorScheme.onSurface,
+                            tint = iconContentColor,
                             imageVector = Icons.Outlined.Shield,
                             contentDescription = "Inactive"
                         )
@@ -68,16 +108,16 @@ fun RelayStatus(
 
             Column {
                 Text(
-                    text = if (isActive) "Relay Active" else "Relay Inactive",
+                    text = title,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    color = textColor
                 )
                 Text(
-                    text = if (isActive) "Connected" else "Disconnected",
+                    text = subtitle,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Normal,
-                    color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    color = textColor.copy(alpha = 0.82f)
                 )
             }
         }

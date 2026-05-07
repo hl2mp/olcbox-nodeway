@@ -15,13 +15,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.repository.LocationsRepository
 
 data class LocationItem(
     val storageId: String,
     val fullName: String,
     val config: LocationConfig? = null,
-    val subscriptionUrl: String? = null
+    val subscriptionUrl: String? = null,
+    val metadata: LocationMetadata? = null
 )
 
 sealed class PingsState {
@@ -89,7 +91,8 @@ class LocationViewModel(
                         storageId = entry.storageId,
                         fullName = normalized.displayName(),
                         config = normalized,
-                        subscriptionUrl = entry.subscriptionUrl
+                        subscriptionUrl = entry.subscriptionUrl,
+                        metadata = entry.metadata
                     )
                 )
             }

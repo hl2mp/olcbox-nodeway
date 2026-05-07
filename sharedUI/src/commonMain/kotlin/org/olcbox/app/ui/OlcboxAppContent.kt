@@ -25,9 +25,11 @@ fun OlcboxAppContent(
     onToggleClick: () -> Unit,
     onImportFileRequested: () -> Unit,
     onImportFromClipboardRequested: () -> Unit,
+    onScanQrRequested: () -> Unit = {},
     onCopyConfigRequested: () -> Unit,
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit,
     showAppSettingsButton: Boolean,
+    canScanQr: Boolean = false,
     onAppSettingsClick: () -> Unit
 ) {
     val homeScrollState = rememberScrollState()
@@ -71,9 +73,11 @@ fun OlcboxAppContent(
                     onToggleClick = onToggleClick,
                     onImportFileRequested = onImportFileRequested,
                     onImportFromClipboardRequested = onImportFromClipboardRequested,
+                    onScanQrRequested = onScanQrRequested,
                     onCopyConfigRequested = onCopyConfigRequested,
                     onSaveLogsRequested = onSaveLogsRequested,
                     showAppSettingsButton = showAppSettingsButton,
+                    canScanQr = canScanQr,
                     onAppSettingsClick = onAppSettingsClick,
                     onOpenLocationSettings = { id ->
                         locationViewModel.startEditing(id)

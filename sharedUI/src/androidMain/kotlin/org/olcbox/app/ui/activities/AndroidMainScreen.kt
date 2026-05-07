@@ -1,6 +1,7 @@
 package org.olcbox.app.ui.activities
 
 import android.app.Activity
+import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
 import android.widget.Toast
@@ -110,6 +111,24 @@ fun AndroidMainScreen(
         }
     }
 
+    val qrScannerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result: ActivityResult ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+
+        val rawText = result.data?.getStringExtra(QrScannerActivity.EXTRA_QR_TEXT)
+            ?.trim()
+            .orEmpty()
+
+        if (rawText.isBlank()) return@rememberLauncherForActivityResult
+
+        viewModel.onImportFullConfig(rawText) {
+            locationViewModel.loadLocations()
+            viewModel.loadCurrentConfig()
+            Toast.makeText(context, "QR imported", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val logSaveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri: Uri? ->
@@ -160,6 +179,9 @@ fun AndroidMainScreen(
                 viewModel.loadCurrentConfig()
             }
         },
+        onScanQrRequested = {
+            qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java))
+        },
         onCopyConfigRequested = {
             viewModel.onCopyFullConfigClicked()
         },
@@ -168,6 +190,7 @@ fun AndroidMainScreen(
             logSaveLauncher.launch(viewModel.suggestedLogsFileName())
         },
         showAppSettingsButton = true,
+        canScanQr = true,
         onAppSettingsClick = {
             vpnManager.refreshInstalledApps()
             isAppSettingsOpen = true
@@ -186,6 +209,10 @@ fun AndroidMainScreen(
             onDismiss = {
                 isAppSettingsOpen = false
                 applyPendingSplitTunnelRestart()
+            },
+            onCopyConfigClick = {
+                viewModel.onCopyFullConfigClicked()
+                Toast.makeText(context, "Config copied", Toast.LENGTH_SHORT).show()
             },
             onSaveLogsClick = {
                 val showToast: (String) -> Unit = { message ->
