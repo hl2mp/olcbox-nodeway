@@ -189,60 +189,67 @@ if (currentBuildOs.isLinux) {
     val appImageTool = providers.environmentVariable("APPIMAGETOOL").orElse("appimagetool")
     val jpackageAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
     val appDir = layout.buildDirectory.dir("compose/binaries/main-release/appimage/AppDir")
+    val linuxIconFile = layout.projectDirectory.file("appIcons/LinuxIcon.png")
     val appImageFile = layout.buildDirectory.file(
         "compose/binaries/main-release/appimage/$desktopPackageName-$desktopPackageVersion-$hostDesktopArch.AppImage"
     )
+
+    val prepareReleaseLinuxAppDir = tasks.register<Exec>("prepareReleaseLinuxAppDir") {
+        group = "distribution"
+        description = "Prepares the AppDir layout used by appimagetool."
+
+        dependsOn("packageReleaseAppImage")
+        inputs.dir(jpackageAppDir)
+        inputs.file(linuxIconFile)
+        outputs.dir(appDir)
+
+        commandLine(
+            "sh",
+            "-c",
+            """
+            set -eu
+
+            source_dir="${'$'}1"
+            target_dir="${'$'}2"
+            icon_file="${'$'}3"
+
+            rm -rf "${'$'}target_dir"
+            mkdir -p "${'$'}target_dir"
+            cp -R "${'$'}source_dir/." "${'$'}target_dir/"
+
+            cat > "${'$'}target_dir/AppRun" <<'APPRUN'
+            #!/bin/sh
+            HERE="${'$'}(dirname "${'$'}(readlink -f "${'$'}0")")"
+            exec "${'$'}HERE/bin/$desktopPackageName" "${'$'}@"
+            APPRUN
+            chmod +x "${'$'}target_dir/AppRun"
+
+            cat > "${'$'}target_dir/org.olcbox.app.desktopApp.desktop" <<'DESKTOP'
+            [Desktop Entry]
+            Type=Application
+            Name=$desktopPackageName
+            Exec=$desktopPackageName
+            Icon=olcbox
+            Categories=Network;Utility;
+            Terminal=false
+            DESKTOP
+
+            cp "${'$'}icon_file" "${'$'}target_dir/olcbox.png"
+            """.trimIndent(),
+            "prepareReleaseLinuxAppDir",
+            jpackageAppDir.get().asFile.absolutePath,
+            appDir.get().asFile.absolutePath,
+            linuxIconFile.asFile.absolutePath
+        )
+    }
 
     val packageReleaseLinuxAppImage = tasks.register<Exec>("packageReleaseLinuxAppImage") {
         group = "distribution"
         description = "Packages the Linux desktop app as a real .AppImage file."
 
-        dependsOn("packageReleaseAppImage")
-        inputs.dir(jpackageAppDir)
-        inputs.file(project.file("appIcons/LinuxIcon.png"))
+        dependsOn(prepareReleaseLinuxAppDir)
+        inputs.dir(appDir)
         outputs.file(appImageFile)
-
-        doFirst {
-            val sourceDir = jpackageAppDir.get().asFile
-            val targetDir = appDir.get().asFile
-
-            delete(targetDir)
-            copy {
-                from(sourceDir)
-                into(targetDir)
-            }
-
-            targetDir.resolve("AppRun").apply {
-                writeText(
-                    """
-                    |#!/bin/sh
-                    |HERE="${'$'}(dirname "${'$'}(readlink -f "${'$'}0")")"
-                    |exec "${'$'}HERE/bin/$desktopPackageName" "${'$'}@"
-                    |""".trimMargin() + "\n"
-                )
-                setExecutable(true)
-            }
-
-            targetDir.resolve("org.olcbox.app.desktopApp.desktop").writeText(
-                """
-                |[Desktop Entry]
-                |Type=Application
-                |Name=$desktopPackageName
-                |Exec=$desktopPackageName
-                |Icon=olcbox
-                |Categories=Network;Utility;
-                |Terminal=false
-                |""".trimMargin() + "\n"
-            )
-
-            copy {
-                from(project.file("appIcons/LinuxIcon.png"))
-                into(targetDir)
-                rename { "olcbox.png" }
-            }
-
-            appImageFile.get().asFile.parentFile.mkdirs()
-        }
 
         commandLine(
             appImageTool.get(),
