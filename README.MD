@@ -1,6 +1,6 @@
 # Olcbox
 
-`olcrtc` configurator built with Kotlin Multiplatform and Compose. ALPHA version for now
+`olcrtc` configurator built with Kotlin Multiplatform and Compose.
 
 <p align="center">
   <img src="docs/screenshots/photo_2026-05-05_15-40-57.jpg" alt="Olcbox home screen" width="200">
@@ -8,14 +8,28 @@
   <img src="docs/screenshots/photo_2026-05-05_20-40-45.jpg" alt="Olcbox split tunneling settings screen" width="200">
 </p>
 
-If you want to support the project, you can send a donation to this card:
+## Status
+Alpha version.
+Not intended for production use.
 
-```text
-2200 7021 6458 2509
-```
+## Support
+Support options are not publicly listed. Contact the author if needed.
+
+## Legal Notice
+This software is intended for development, testing and research purposes only.
+
+The author does not provide any guarantees regarding:
+- availability of network access
+- compatibility with specific services
+- compliance with any external restrictions
+
+Users are solely responsible for how they use this software and must comply with applicable laws.
+
+## Usage Restrictions
+This software is not intended to be used for bypassing access restrictions or violating applicable laws.
+The author does not support or encourage such use.
 
 ## Features
-
 - One-tap tunnel start/stop with live relay status.
 - Saved connection profiles with active location selection.
 - Carriers: Jazz, Telemost, WB Stream.
