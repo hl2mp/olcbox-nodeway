@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Search
@@ -69,12 +70,14 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -86,7 +89,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidInstalledApp
@@ -121,6 +126,7 @@ internal fun AppSettingsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     var route by remember(initialRoute) { mutableStateOf(initialRoute.toRoute()) }
+    var autoBypassPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
     val isAppPickerRoute = route is AppSettingsRoute.AppList
     val dragHandle: (@Composable () -> Unit)? = if (isAppPickerRoute) {
         null
@@ -231,7 +237,9 @@ internal fun AppSettingsSheet(
                     enabled = enabled,
                     onBack = { route = AppSettingsRoute.SplitTunneling },
                     onAppToggled = onSplitTunnelAppToggled,
-                    onAppsSelected = onSplitTunnelAppsSelected
+                    onAppsSelected = onSplitTunnelAppsSelected,
+                    autoBypassPackages = autoBypassPackages,
+                    onAutoBypassPackagesChanged = { autoBypassPackages = it }
                 )
 
                 AppSettingsRoute.ApplicationLogs -> ApplicationLogsSettingsContent(
@@ -487,7 +495,7 @@ private fun SplitTunnelingSettingsContent(
             )
 
             AndroidSplitTunnelMode.BypassSelected -> SplitTunnelAppListAction(
-                title = "Apps Bypassing Olcbox",
+                title = "Route Apps Directly",
                 value = settings.bypassPackages.activeListValue(requireSelection = false),
                 icon = Icons.Outlined.Apps,
                 enabled = enabled,
@@ -505,9 +513,12 @@ private fun SplitTunnelingAppListContent(
     enabled: Boolean,
     onBack: () -> Unit,
     onAppToggled: (AndroidSplitTunnelList, String) -> Unit,
-    onAppsSelected: (AndroidSplitTunnelList, Set<String>) -> Unit
+    onAppsSelected: (AndroidSplitTunnelList, Set<String>) -> Unit,
+    autoBypassPackages: Set<String>,
+    onAutoBypassPackagesChanged: (Set<String>) -> Unit
 ) {
     var query by remember(list) { mutableStateOf("") }
+    var showBypassFilters by remember(list) { mutableStateOf(false) }
     val selectedPackages = settings.packagesFor(list)
     val russianBypassPackages = remember(installedApps) {
         installedApps
@@ -515,20 +526,35 @@ private fun SplitTunnelingAppListContent(
             .filter { it.matchesRussianBypassPackage() }
             .toSet()
     }
-    val selectedRussianBypassCount = russianBypassPackages.count { it in selectedPackages }
-    val russianBypassChecked = russianBypassPackages.isNotEmpty() &&
-        selectedRussianBypassCount == russianBypassPackages.size
+    val activeAutoBypassPackages = autoBypassPackages.intersect(selectedPackages)
     val normalizedQuery = query.trim().lowercase()
-    val filteredApps = remember(installedApps, normalizedQuery, selectedPackages) {
+    val appListEntries = remember(installedApps) {
+        installedApps.map { app ->
+            AndroidAppListEntry(
+                app = app,
+                labelSortKey = app.label.lowercase(),
+                packageSortKey = app.packageName.lowercase()
+            )
+        }
+    }
+    val filteredApps = remember(appListEntries, normalizedQuery, selectedPackages, activeAutoBypassPackages) {
         val apps = if (normalizedQuery.isBlank()) {
-            installedApps
+            appListEntries
         } else {
-            installedApps.filter { app ->
-                app.label.lowercase().contains(normalizedQuery) ||
-                        app.packageName.lowercase().contains(normalizedQuery)
+            appListEntries.filter { entry ->
+                entry.labelSortKey.contains(normalizedQuery) ||
+                    entry.packageSortKey.contains(normalizedQuery)
             }
         }
-        apps.sortedByDescending { it.packageName in selectedPackages }
+        apps.sortedWith(
+            compareBy<AndroidAppListEntry> {
+                when (it.app.packageName) {
+                    in activeAutoBypassPackages -> 0
+                    in selectedPackages -> 1
+                    else -> 2
+                }
+            }.thenBy { it.labelSortKey }.thenBy { it.packageSortKey }
+        ).map { it.app }
     }
 
     Column(
@@ -540,44 +566,72 @@ private fun SplitTunnelingAppListContent(
     ) {
         SettingsDetailHeader(
             title = list.title(),
-            subtitle = "${appCount(selectedPackages.size)} selected",
+            subtitle = list.selectionSubtitle(selectedPackages.size),
             onBack = onBack
         )
 
         Spacer(Modifier.height(16.dp))
 
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = enabled,
-            singleLine = true,
-            leadingIcon = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.weight(1f),
+                enabled = enabled,
+                singleLine = true,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Search,
+                        contentDescription = null
+                    )
+                },
+                label = { Text("Search apps") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
+            )
+
+            if (list == AndroidSplitTunnelList.Bypass) {
+                Spacer(Modifier.width(8.dp))
                 Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = null
+                    imageVector = Icons.Outlined.FilterList,
+                    contentDescription = "Direct route presets",
+                    tint = if (showBypassFilters || activeAutoBypassPackages.isNotEmpty()) {
+                        RussianBypassOrange
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .clickable(enabled = enabled) { showBypassFilters = !showBypassFilters }
+                        .padding(12.dp)
                 )
-            },
-            label = { Text("Search apps") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
-        )
+            }
+        }
 
         Spacer(Modifier.height(12.dp))
 
-        if (list == AndroidSplitTunnelList.Bypass) {
+        if (list == AndroidSplitTunnelList.Bypass && showBypassFilters) {
             RussianBypassPresetRow(
-                checked = russianBypassChecked,
+                active = activeAutoBypassPackages.isNotEmpty(),
                 enabled = enabled && russianBypassPackages.isNotEmpty(),
-                value = russianBypassPackages.russianBypassPresetValue(selectedRussianBypassCount),
-                onCheckedChange = { checked ->
-                    val nextPackages = if (checked) {
-                        selectedPackages + russianBypassPackages
+                value = russianBypassPackages.russianBypassPresetValue(activeAutoBypassPackages.size),
+                onClick = {
+                    val nextAutoPackages = if (activeAutoBypassPackages.isEmpty()) {
+                        russianBypassPackages - selectedPackages
                     } else {
-                        selectedPackages - russianBypassPackages
+                        emptySet()
                     }
+                    val nextPackages = if (activeAutoBypassPackages.isEmpty()) {
+                        selectedPackages + nextAutoPackages
+                    } else {
+                        selectedPackages - activeAutoBypassPackages
+                    }
+                    onAutoBypassPackagesChanged(nextAutoPackages)
                     onAppsSelected(list, nextPackages)
                 }
             )
+
+            RussianBypassAccuracyNote()
 
             Spacer(Modifier.height(12.dp))
         }
@@ -601,11 +655,20 @@ private fun SplitTunnelingAppListContent(
                     items = filteredApps,
                     key = { app -> app.packageName }
                 ) { app ->
+                    val packageName = app.packageName
+                    val autoSelected = list == AndroidSplitTunnelList.Bypass &&
+                        packageName in activeAutoBypassPackages
                     SplitTunnelAppRow(
                         app = app,
-                        selected = app.packageName in selectedPackages,
+                        selected = packageName in selectedPackages,
+                        autoSelected = autoSelected,
                         enabled = enabled,
-                        onClick = { onAppToggled(list, app.packageName) }
+                        onClick = {
+                            if (autoSelected) {
+                                onAutoBypassPackagesChanged(autoBypassPackages - packageName)
+                            }
+                            onAppToggled(list, packageName)
+                        }
                     )
                 }
             }
@@ -1374,20 +1437,28 @@ private fun SocksProxyTextField(
 
 @Composable
 private fun RussianBypassPresetRow(
-    checked: Boolean,
+    active: Boolean,
     enabled: Boolean,
     value: String,
-    onCheckedChange: (Boolean) -> Unit
+    onClick: () -> Unit
 ) {
+    val containerColor by animateColorAsState(
+        targetValue = if (active) RussianBypassContainer else MaterialTheme.colorScheme.surfaceContainer,
+        label = "russianBypassPresetContainer"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (active) RussianBypassOrange else MaterialTheme.colorScheme.outlineVariant,
+        label = "russianBypassPresetBorder"
+    )
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(76.dp)
             .clip(RoundedCornerShape(18.dp))
-            .clickable(enabled = enabled) { onCheckedChange(!checked) },
+            .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = containerColor,
+        border = BorderStroke(1.dp, borderColor)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp),
@@ -1396,11 +1467,11 @@ private fun RussianBypassPresetRow(
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (active) RussianBypassOrange else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Apps,
+                    imageVector = Icons.Outlined.FilterList,
                     contentDescription = null,
                     modifier = Modifier.padding(10.dp)
                 )
@@ -1409,9 +1480,19 @@ private fun RussianBypassPresetRow(
             Spacer(Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
+                val titleColor = if (active) {
+                    RussianBypassOnContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+                val valueColor = if (active) {
+                    RussianBypassOnContainerVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
                 Text(
-                    text = "Auto-select Russian apps",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    text = if (active) "RU apps route directly" else "Route RU apps directly",
+                    color = titleColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1419,32 +1500,46 @@ private fun RussianBypassPresetRow(
                 )
                 Text(
                     text = value,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = valueColor,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            Checkbox(
-                checked = checked,
-                enabled = enabled,
-                onCheckedChange = onCheckedChange
+            Text(
+                text = if (active) "ON" else "RUN",
+                color = if (active) RussianBypassOrange else MaterialTheme.colorScheme.primary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }
 }
 
 @Composable
+private fun RussianBypassAccuracyNote() {
+    Text(
+        text = "Package detection can be inaccurate. Review the direct-route apps below.",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(start = 2.dp, top = 8.dp)
+    )
+}
+
+@Composable
 private fun SplitTunnelAppRow(
     app: AndroidInstalledApp,
     selected: Boolean,
+    autoSelected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit
 ) {
     val iconBitmap = rememberAppIcon(app.packageName)
     val containerColor by animateColorAsState(
-        targetValue = if (selected) {
+        targetValue = if (autoSelected) {
+            RussianBypassContainer
+        } else if (selected) {
             MaterialTheme.colorScheme.secondaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceContainer
@@ -1452,7 +1547,9 @@ private fun SplitTunnelAppRow(
         label = "splitTunnelAppRowContainer"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (selected) {
+        targetValue = if (autoSelected) {
+            RussianBypassOrange
+        } else if (selected) {
             MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.outlineVariant
@@ -1477,12 +1574,14 @@ private fun SplitTunnelAppRow(
             Surface(
                 modifier = Modifier.size(42.dp),
                 shape = CircleShape,
-                color = if (selected) {
+                color = if (autoSelected) {
+                    RussianBypassOrange
+                } else if (selected) {
                     MaterialTheme.colorScheme.primary
                 } else {
                     MaterialTheme.colorScheme.surfaceVariant
                 },
-                contentColor = if (selected) {
+                contentColor = if (autoSelected || selected) {
                     MaterialTheme.colorScheme.onPrimary
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -1510,9 +1609,19 @@ private fun SplitTunnelAppRow(
             Spacer(Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
+                val titleColor = if (autoSelected) {
+                    RussianBypassOnContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+                val packageColor = if (autoSelected) {
+                    RussianBypassOnContainerVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
                 Text(
                     text = app.label,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = titleColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1520,7 +1629,7 @@ private fun SplitTunnelAppRow(
                 )
                 Text(
                     text = app.packageName,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = packageColor,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1571,14 +1680,17 @@ private fun EmptyAppsState(
 
 @Composable
 private fun rememberAppIcon(packageName: String): ImageBitmap? {
-    val context = LocalContext.current
-    return remember(packageName) {
-        runCatching {
-            context.packageManager
-                .getApplicationIcon(packageName)
-                .toImageBitmap(sizePx = 96)
-        }.getOrNull()
+    val context = LocalContext.current.applicationContext
+    val iconState = produceState<ImageBitmap?>(initialValue = null, packageName, context) {
+        value = withContext(Dispatchers.Default) {
+            runCatching {
+                context.packageManager
+                    .getApplicationIcon(packageName)
+                    .toImageBitmap(sizePx = 96)
+            }.getOrNull()
+        }
     }
+    return iconState.value
 }
 
 private fun Drawable.toImageBitmap(sizePx: Int): ImageBitmap {
@@ -1675,7 +1787,7 @@ private fun AndroidSplitTunnelMode.title(): String {
     return when (this) {
         AndroidSplitTunnelMode.AllApps -> "All Apps"
         AndroidSplitTunnelMode.ProxySelected -> "Selected Apps Only"
-        AndroidSplitTunnelMode.BypassSelected -> "Bypass Selected"
+        AndroidSplitTunnelMode.BypassSelected -> "Route Some Directly"
     }
 }
 
@@ -1689,9 +1801,9 @@ private fun AndroidSplitTunnelMode.subtitle(settings: AndroidSplitTunnelSettings
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "Choose apps that bypass Olcbox"
+            "Choose apps that skip Olcbox"
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass Olcbox"
+            "${appCount(settings.bypassPackages.size)} route directly"
         }
     }
 }
@@ -1706,9 +1818,9 @@ private fun AndroidSplitTunnelMode.statusTitle(settings: AndroidSplitTunnelSetti
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "No apps bypass Olcbox"
+            "No apps route directly"
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass Olcbox"
+            "${appCount(settings.bypassPackages.size)} route directly"
         }
     }
 }
@@ -1722,16 +1834,23 @@ private fun AndroidSplitTunnelMode.icon() = when (this) {
 private fun AndroidSplitTunnelList.title(): String {
     return when (this) {
         AndroidSplitTunnelList.Proxy -> "Apps Using Olcbox"
-        AndroidSplitTunnelList.Bypass -> "Apps Bypassing Olcbox"
+        AndroidSplitTunnelList.Bypass -> "Apps Routed Directly"
     }
 }
 
-private fun Set<String>.russianBypassPresetValue(selectedCount: Int): String {
+private fun AndroidSplitTunnelList.selectionSubtitle(count: Int): String {
+    return when (this) {
+        AndroidSplitTunnelList.Proxy -> "${appCount(count)} use Olcbox"
+        AndroidSplitTunnelList.Bypass -> "${appCount(count)} route directly"
+    }
+}
+
+private fun Set<String>.russianBypassPresetValue(autoCount: Int): String {
     return when {
         isEmpty() -> "No matching installed apps"
-        selectedCount == size -> "${appCount(size)} excluded"
-        selectedCount == 0 -> "${appCount(size)} matched"
-        else -> "$selectedCount of $size matched apps selected"
+        autoCount == 0 -> "${appCount(size)} matched by package"
+        autoCount == size -> "${appCount(size)} auto-routed directly"
+        else -> "$autoCount of $size auto-routed directly"
     }
 }
 
@@ -1745,7 +1864,7 @@ private fun Set<String>.activeListValue(requireSelection: Boolean): String {
     return when {
         isNotEmpty() -> appCount(size)
         requireSelection -> "Required"
-        else -> "No apps selected"
+        else -> "No direct-route apps"
     }
 }
 
@@ -1775,9 +1894,19 @@ private fun appCount(count: Int): String {
     return if (count == 1) "1 app" else "$count apps"
 }
 
+private data class AndroidAppListEntry(
+    val app: AndroidInstalledApp,
+    val labelSortKey: String,
+    val packageSortKey: String
+)
+
 private const val MAX_PROXY_USERNAME_LENGTH = 64
 private const val MAX_PROXY_PASSWORD_LENGTH = 64
 private const val MAX_PROXY_PORT_LENGTH = 5
+private val RussianBypassOrange = Color(0xFFD96A00)
+private val RussianBypassContainer = Color(0xFFFFF1DE)
+private val RussianBypassOnContainer = Color(0xFF2B1700)
+private val RussianBypassOnContainerVariant = Color(0xFF6B3A00)
 private val RUSSIAN_BYPASS_PACKAGE_PREFIXES = listOf(
     "ru.",
     "com.yandex."
