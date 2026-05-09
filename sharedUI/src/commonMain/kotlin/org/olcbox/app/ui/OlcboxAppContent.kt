@@ -29,8 +29,10 @@ fun OlcboxAppContent(
     onCopyConfigRequested: () -> Unit,
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit,
     showAppSettingsButton: Boolean,
+    showSplitTunnelingButton: Boolean = false,
     canScanQr: Boolean = false,
-    onAppSettingsClick: () -> Unit
+    onAppSettingsClick: () -> Unit,
+    onSplitTunnelingClick: () -> Unit = {}
 ) {
     val homeScrollState = rememberScrollState()
 
@@ -77,8 +79,10 @@ fun OlcboxAppContent(
                     onCopyConfigRequested = onCopyConfigRequested,
                     onSaveLogsRequested = onSaveLogsRequested,
                     showAppSettingsButton = showAppSettingsButton,
+                    showSplitTunnelingButton = showSplitTunnelingButton,
                     canScanQr = canScanQr,
                     onAppSettingsClick = onAppSettingsClick,
+                    onSplitTunnelingClick = onSplitTunnelingClick,
                     onOpenLocationSettings = { id ->
                         locationViewModel.startEditing(id)
                         onNavigate(AppScreen.LocationSettings(id))

@@ -98,6 +98,7 @@ import org.olcbox.app.vpn.AndroidSplitTunnelSettings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AppSettingsSheet(
+    initialRoute: AppSettingsInitialRoute = AppSettingsInitialRoute.Hub,
     selectedMode: AndroidConnectionMode,
     proxySettings: AndroidSocksProxySettings,
     splitTunnelSettings: AndroidSplitTunnelSettings,
@@ -114,11 +115,12 @@ internal fun AppSettingsSheet(
     onProxySettingsSaved: (String, String, Int) -> Unit,
     onProxyPasswordRegenerated: () -> Unit,
     onSplitTunnelModeSelected: (AndroidSplitTunnelMode) -> Unit,
-    onSplitTunnelAppToggled: (AndroidSplitTunnelList, String) -> Unit
+    onSplitTunnelAppToggled: (AndroidSplitTunnelList, String) -> Unit,
+    onSplitTunnelAppsSelected: (AndroidSplitTunnelList, Set<String>) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    var route by remember { mutableStateOf<AppSettingsRoute>(AppSettingsRoute.Hub) }
+    var route by remember(initialRoute) { mutableStateOf(initialRoute.toRoute()) }
     val isAppPickerRoute = route is AppSettingsRoute.AppList
     val dragHandle: (@Composable () -> Unit)? = if (isAppPickerRoute) {
         null
@@ -228,7 +230,8 @@ internal fun AppSettingsSheet(
                     installedApps = installedApps,
                     enabled = enabled,
                     onBack = { route = AppSettingsRoute.SplitTunneling },
-                    onAppToggled = onSplitTunnelAppToggled
+                    onAppToggled = onSplitTunnelAppToggled,
+                    onAppsSelected = onSplitTunnelAppsSelected
                 )
 
                 AppSettingsRoute.ApplicationLogs -> ApplicationLogsSettingsContent(
@@ -239,6 +242,11 @@ internal fun AppSettingsSheet(
             }
         }
     }
+}
+
+internal enum class AppSettingsInitialRoute {
+    Hub,
+    SplitTunneling
 }
 
 @Composable
@@ -496,10 +504,20 @@ private fun SplitTunnelingAppListContent(
     installedApps: List<AndroidInstalledApp>,
     enabled: Boolean,
     onBack: () -> Unit,
-    onAppToggled: (AndroidSplitTunnelList, String) -> Unit
+    onAppToggled: (AndroidSplitTunnelList, String) -> Unit,
+    onAppsSelected: (AndroidSplitTunnelList, Set<String>) -> Unit
 ) {
     var query by remember(list) { mutableStateOf("") }
     val selectedPackages = settings.packagesFor(list)
+    val russianBypassPackages = remember(installedApps) {
+        installedApps
+            .map { it.packageName }
+            .filter { it.matchesRussianBypassPackage() }
+            .toSet()
+    }
+    val selectedRussianBypassCount = russianBypassPackages.count { it in selectedPackages }
+    val russianBypassChecked = russianBypassPackages.isNotEmpty() &&
+        selectedRussianBypassCount == russianBypassPackages.size
     val normalizedQuery = query.trim().lowercase()
     val filteredApps = remember(installedApps, normalizedQuery, selectedPackages) {
         val apps = if (normalizedQuery.isBlank()) {
@@ -545,6 +563,24 @@ private fun SplitTunnelingAppListContent(
         )
 
         Spacer(Modifier.height(12.dp))
+
+        if (list == AndroidSplitTunnelList.Bypass) {
+            RussianBypassPresetRow(
+                checked = russianBypassChecked,
+                enabled = enabled && russianBypassPackages.isNotEmpty(),
+                value = russianBypassPackages.russianBypassPresetValue(selectedRussianBypassCount),
+                onCheckedChange = { checked ->
+                    val nextPackages = if (checked) {
+                        selectedPackages + russianBypassPackages
+                    } else {
+                        selectedPackages - russianBypassPackages
+                    }
+                    onAppsSelected(list, nextPackages)
+                }
+            )
+
+            Spacer(Modifier.height(12.dp))
+        }
 
         if (filteredApps.isEmpty()) {
             EmptyAppsState(
@@ -1337,6 +1373,69 @@ private fun SocksProxyTextField(
 }
 
 @Composable
+private fun RussianBypassPresetRow(
+    checked: Boolean,
+    enabled: Boolean,
+    value: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) },
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Apps,
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Auto-select Russian apps",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = value,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Checkbox(
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange
+            )
+        }
+    }
+}
+
+@Composable
 private fun SplitTunnelAppRow(
     app: AndroidInstalledApp,
     selected: Boolean,
@@ -1501,6 +1600,13 @@ private sealed class AppSettingsRoute(val depth: Int) {
     data class AppList(val list: AndroidSplitTunnelList) : AppSettingsRoute(2)
 }
 
+private fun AppSettingsInitialRoute.toRoute(): AppSettingsRoute {
+    return when (this) {
+        AppSettingsInitialRoute.Hub -> AppSettingsRoute.Hub
+        AppSettingsInitialRoute.SplitTunneling -> AppSettingsRoute.SplitTunneling
+    }
+}
+
 private fun AndroidConnectionMode.label(): String {
     return when (this) {
         AndroidConnectionMode.Tun -> "TUN"
@@ -1620,6 +1726,21 @@ private fun AndroidSplitTunnelList.title(): String {
     }
 }
 
+private fun Set<String>.russianBypassPresetValue(selectedCount: Int): String {
+    return when {
+        isEmpty() -> "No matching installed apps"
+        selectedCount == size -> "${appCount(size)} excluded"
+        selectedCount == 0 -> "${appCount(size)} matched"
+        else -> "$selectedCount of $size matched apps selected"
+    }
+}
+
+private fun String.matchesRussianBypassPackage(): Boolean {
+    val packageName = lowercase()
+    return packageName in RUSSIAN_BYPASS_PACKAGE_NAMES ||
+        RUSSIAN_BYPASS_PACKAGE_PREFIXES.any { packageName.startsWith(it) }
+}
+
 private fun Set<String>.activeListValue(requireSelection: Boolean): String {
     return when {
         isNotEmpty() -> appCount(size)
@@ -1657,3 +1778,14 @@ private fun appCount(count: Int): String {
 private const val MAX_PROXY_USERNAME_LENGTH = 64
 private const val MAX_PROXY_PASSWORD_LENGTH = 64
 private const val MAX_PROXY_PORT_LENGTH = 5
+private val RUSSIAN_BYPASS_PACKAGE_PREFIXES = listOf(
+    "ru.",
+    "com.yandex."
+)
+private val RUSSIAN_BYPASS_PACKAGE_NAMES = setOf(
+    "ru.sberbankmobile",
+    "ru.ozon.app.android",
+    "ru.avito",
+    "ru.vtb24.mobilebanking.android",
+    "ru.tinkoff.mb"
+)

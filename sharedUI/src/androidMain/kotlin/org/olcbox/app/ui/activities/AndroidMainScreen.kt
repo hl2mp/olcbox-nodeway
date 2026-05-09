@@ -70,6 +70,7 @@ fun AndroidMainScreen(
         mutableStateOf<PendingVpnPermissionAction?>(null)
     }
     var isAppSettingsOpen by remember { mutableStateOf(false) }
+    var appSettingsInitialRoute by remember { mutableStateOf(AppSettingsInitialRoute.Hub) }
     var splitTunnelRestartPending by remember { mutableStateOf(false) }
 
     fun markSplitTunnelChanged() {
@@ -191,8 +192,15 @@ fun AndroidMainScreen(
             logSaveLauncher.launch(viewModel.suggestedLogsFileName())
         },
         showAppSettingsButton = true,
+        showSplitTunnelingButton = true,
         canScanQr = true,
         onAppSettingsClick = {
+            appSettingsInitialRoute = AppSettingsInitialRoute.Hub
+            vpnManager.refreshInstalledApps()
+            isAppSettingsOpen = true
+        },
+        onSplitTunnelingClick = {
+            appSettingsInitialRoute = AppSettingsInitialRoute.SplitTunneling
             vpnManager.refreshInstalledApps()
             isAppSettingsOpen = true
         }
@@ -200,6 +208,7 @@ fun AndroidMainScreen(
 
     if (isAppSettingsOpen) {
         AppSettingsSheet(
+            initialRoute = appSettingsInitialRoute,
             selectedMode = connectionMode,
             proxySettings = proxySettings,
             splitTunnelSettings = splitTunnelSettings,
@@ -260,6 +269,10 @@ fun AndroidMainScreen(
             },
             onSplitTunnelAppToggled = { list: AndroidSplitTunnelList, packageName: String ->
                 vpnManager.toggleSplitTunnelApp(list, packageName)
+                markSplitTunnelChanged()
+            },
+            onSplitTunnelAppsSelected = { list: AndroidSplitTunnelList, packages: Set<String> ->
+                vpnManager.setSplitTunnelApps(list, packages)
                 markSplitTunnelChanged()
             }
         )
