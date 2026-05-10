@@ -192,7 +192,7 @@ fun AndroidMainScreen(
             logSaveLauncher.launch(viewModel.suggestedLogsFileName())
         },
         showAppSettingsButton = true,
-        showSplitTunnelingButton = true,
+        showSplitTunnelingButton = false,
         canScanQr = true,
         onAppSettingsClick = {
             appSettingsInitialRoute = AppSettingsInitialRoute.Hub
