@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -20,6 +21,8 @@ fun HomeScreenAppBar(
     onHistoryClick: () -> Unit = {},
     showAppSettingsButton: Boolean = false,
     onAppSettingsClick: () -> Unit = {},
+    showSplitTunnelingButton: Boolean = false,
+    onSplitTunnelingClick: () -> Unit = {},
     onAddClick: () -> Unit = {}
 ) {
     CenterAlignedTopAppBar(
@@ -57,6 +60,15 @@ fun HomeScreenAppBar(
             }
         },
         actions = {
+            if (showSplitTunnelingButton) {
+                IconButton(onClick = onSplitTunnelingClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Shield,
+                        contentDescription = "Split tunneling",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
             IconButton(onClick = onAddClick) {
                 Icon(
                     imageVector = Icons.Outlined.Add,

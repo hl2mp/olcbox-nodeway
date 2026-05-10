@@ -45,6 +45,8 @@ fun HomeScreen(
     showAppSettingsButton: Boolean = false,
     canScanQr: Boolean = false,
     onAppSettingsClick: () -> Unit = {},
+    showSplitTunnelingButton: Boolean = false,
+    onSplitTunnelingClick: () -> Unit = {},
     onOpenLocationSettings: (String?) -> Unit,
     onAddLocation: () -> Unit
 ) {
@@ -83,6 +85,8 @@ fun HomeScreen(
                 onHistoryClick = { isLogsSheetOpen = true },
                 showAppSettingsButton = showAppSettingsButton,
                 onAppSettingsClick = onAppSettingsClick,
+                showSplitTunnelingButton = showSplitTunnelingButton,
+                onSplitTunnelingClick = onSplitTunnelingClick,
                 onAddClick = { isAddSheetOpen = true }
             )
         }

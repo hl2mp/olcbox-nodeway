@@ -168,13 +168,21 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             }
         }
 
-        _splitTunnelSettings.value = next
-        scope.launch {
-            appContext.vpnPrefDataStore.edit { preferences ->
-                preferences[KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS] = next.proxyPackages
-                preferences[KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS] = next.bypassPackages
-            }
+        updateSplitTunnelSettings(next)
+    }
+
+    fun setSplitTunnelApps(list: AndroidSplitTunnelList, packages: Set<String>) {
+        val normalizedPackages = packages
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        val current = _splitTunnelSettings.value
+        val next = when (list) {
+            AndroidSplitTunnelList.Proxy -> current.copy(proxyPackages = normalizedPackages)
+            AndroidSplitTunnelList.Bypass -> current.copy(bypassPackages = normalizedPackages)
         }
+
+        updateSplitTunnelSettings(next)
     }
 
     override fun startVpn() {
@@ -280,6 +288,16 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     private fun Set<String>.toggle(value: String): Set<String> {
         return if (value in this) this - value else this + value
+    }
+
+    private fun updateSplitTunnelSettings(settings: AndroidSplitTunnelSettings) {
+        _splitTunnelSettings.value = settings
+        scope.launch {
+            appContext.vpnPrefDataStore.edit { preferences ->
+                preferences[KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS] = settings.proxyPackages
+                preferences[KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS] = settings.bypassPackages
+            }
+        }
     }
 
     private data class AndroidAppPreferences(
