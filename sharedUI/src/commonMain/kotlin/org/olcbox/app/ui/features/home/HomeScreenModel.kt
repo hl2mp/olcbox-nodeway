@@ -3,6 +3,7 @@ package org.olcbox.app.ui.features.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -159,32 +160,9 @@ class HomeScreenViewModel(
             is VpnStatus.Error -> Unit
         }
     }
-
-    fun onServerChanged(value: String) = updateLocationConfig { it.copy(id = value) }
-    fun onPasswordChanged(value: String) = updateLocationConfig { it.copy(key = value) }
-    fun onSniChanged(value: String) = Unit
-
     private fun updateLocationConfig(block: (LocationConfig) -> LocationConfig) {
         _state.update { it.copy(configData = block(it.configData)) }
     }
-
-    fun onConfigConfirmed() {
-        if (isUserConfigValid()) {
-            viewModelScope.launch {
-                val selectedId = locationsRepository.getActiveLocationId()
-                if (!selectedId.isNullOrBlank()) {
-                    locationsRepository.saveLocation(selectedId, _state.value.configData)
-                }
-            }
-        } else {
-            _state.update { it.copy(shouldShowConfigInvalidReminder = true) }
-        }
-    }
-
-    fun onConfigInvalidReminderDismissed() {
-        _state.update { it.copy(shouldShowConfigInvalidReminder = false) }
-    }
-
     fun onCopyFullConfigClicked() {
         viewModelScope.launch {
             configImporter.copyToClipboard(locationsRepository.exportBundle())
@@ -229,20 +207,6 @@ class HomeScreenViewModel(
             }
         }
     }
-
-    private fun isUserConfigValid(): Boolean {
-        return _state.value.configData.isComplete()
-    }
-
-    fun onRawConfigImported(rawText: String) {
-        if (rawText.isBlank()) return
-        viewModelScope.launch {
-            locationsRepository.importText(rawText)
-            _state.update { it.copy(shouldShowConfigInvalidReminder = false) }
-            loadCurrentConfig()
-        }
-    }
-
     fun onImportFullConfig(rawText: String, onComplete: () -> Unit = {}) {
         if (rawText.isBlank()) return
         viewModelScope.launch {

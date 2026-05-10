@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mobile.Mobile
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.vpn.OlcRtcConnectionChecker.HTTP_PING_ATTEMPTS
 import java.net.ServerSocket
 
 internal object OlcRtcConnectionChecker {
@@ -27,8 +28,41 @@ internal object OlcRtcConnectionChecker {
                         config.vp8Batch.toLong()
                     )
                 }.getOrNull()
+
                 if (result != null && result > 0L) return@withContext result
             }
+
+            null
+        }
+    }
+
+    suspend fun ping(locationConfig: LocationConfig): Long? {
+        return withContext(Dispatchers.IO) {
+            val config = locationConfig.normalized()
+            if (!config.isComplete()) return@withContext null
+
+            repeat(HTTP_PING_ATTEMPTS) {
+                val socksPort = allocateLocalPort()
+                val result = runCatching {
+                    Mobile.ping(
+                        config.bypassProvider,
+                        config.transport,
+                        config.id,
+                        config.clientId,
+                        config.key,
+                        socksPort.toLong(),
+                        HTTP_PING_TIMEOUT_MS,
+                        HTTP_PING_URL,
+                        config.vp8Fps.toLong(),
+                        config.vp8Batch.toLong()
+                    )
+                }.onFailure {
+                    android.util.Log.e("OlcRtcConnectionChecker", "HTTP ping failed", it)
+                }.getOrNull()
+
+                if (result != null && result >= 0L) return@withContext result
+            }
+
             null
         }
     }
@@ -39,4 +73,8 @@ internal object OlcRtcConnectionChecker {
 
     private const val CONNECTION_CHECK_ATTEMPTS = 2
     private const val CONNECTION_CHECK_TIMEOUT_MS = 8_000L
+
+    private const val HTTP_PING_ATTEMPTS = 1
+    private const val HTTP_PING_TIMEOUT_MS = 8_000L
+    private const val HTTP_PING_URL = "https://www.google.com/generate_204"
 }

@@ -79,6 +79,7 @@ fun LocationSelectorScreen(
                             locations = group,
                             modifier = Modifier.weight(1f)
                         )
+
                         if (index == 0) {
                             RefreshButton(
                                 state = pingsState,
@@ -119,6 +120,7 @@ fun LocationSelectorScreen(
                             title = "Custom locations",
                             modifier = Modifier.weight(1f)
                         )
+
                         if (subscriptionGroups.isEmpty()) {
                             RefreshButton(
                                 state = pingsState,
@@ -153,7 +155,11 @@ fun LocationSelectorScreen(
             ) {
                 Icon(Icons.Rounded.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Add custom location", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = "Add custom location",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             if (subscriptionLocations.isEmpty()) {
@@ -166,13 +172,16 @@ fun LocationSelectorScreen(
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Add subscription", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = "Add subscription",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
     }
 }
-
 @Composable
 private fun RelaySetupCard(
     onAddSubscriptionClick: () -> Unit,
@@ -220,11 +229,13 @@ private fun SetupActionRow(
     } else {
         MaterialTheme.colorScheme.surfaceContainerHigh
     }
+
     val borderColor = if (prominent) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.outlineVariant
     }
+
     val contentColor = if (prominent) {
         MaterialTheme.colorScheme.onSecondaryContainer
     } else {
@@ -273,6 +284,7 @@ private fun SetupActionRow(
                     color = contentColor,
                     fontWeight = FontWeight.SemiBold
                 )
+
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
@@ -305,7 +317,6 @@ private fun SubscriptionGroupHeader(
     modifier: Modifier = Modifier
 ) {
     val first = locations.firstOrNull()
-    val subscription = first?.metadata?.subscription
     val title = first?.subscriptionTitle().orEmpty().ifBlank { "Subscriptions" }
     val details = first?.subscriptionDetails()
 
@@ -316,6 +327,7 @@ private fun SubscriptionGroupHeader(
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold
         )
+
         if (!details.isNullOrBlank()) {
             Text(
                 text = details,
@@ -335,19 +347,65 @@ private fun LocationSelectorRow(
     onLocationSelected: (String) -> Unit,
     onLocationSettingsClick: (String) -> Unit
 ) {
-    val pingMs = (pingsState as? PingsState.Success)?.pings?.get(location.storageId)
-        ?: (pingsState as? PingsState.Loading)?.lastPings?.get(location.storageId)
-    val isOffline = pingsState is PingsState.Success && pingMs == null
+    val pingMs = pingsState.pingFor(location.storageId)
+    val isLoading = pingsState.isChecking(location.storageId)
+    val isOffline = pingsState.isOffline(location.storageId)
 
     LocationRow(
         location = location,
         isSelected = selectedLocationId == location.storageId,
-        isLoading = pingsState is PingsState.Loading,
+        isLoading = isLoading,
         isError = isOffline,
         pingMs = pingMs,
-        onSettingsClick = { onLocationSettingsClick(location.storageId) },
-        onClick = { onLocationSelected(location.storageId) }
+        onSettingsClick = {
+            onLocationSettingsClick(location.storageId)
+        },
+        onClick = {
+            onLocationSelected(location.storageId)
+        }
     )
+}
+
+private fun PingsState.pingFor(locationId: String): Int? {
+    return when (this) {
+        PingsState.Idle -> null
+
+        is PingsState.Loading -> {
+            if (currentPings.containsKey(locationId)) {
+                currentPings[locationId]
+            } else {
+                lastPings?.get(locationId)
+            }
+        }
+
+        is PingsState.Success -> {
+            pings[locationId]
+        }
+
+        is PingsState.Error -> {
+            lastPings?.get(locationId)
+        }
+    }
+}
+
+private fun PingsState.isChecking(locationId: String): Boolean {
+    return this is PingsState.Loading && locationId in pendingLocationIds
+}
+
+private fun PingsState.isOffline(locationId: String): Boolean {
+    return when (this) {
+        PingsState.Idle -> false
+
+        is PingsState.Loading -> {
+            currentPings.containsKey(locationId) && currentPings[locationId] == null
+        }
+
+        is PingsState.Success -> {
+            pings.containsKey(locationId) && pings[locationId] == null
+        }
+
+        is PingsState.Error -> false
+    }
 }
 
 private fun LocationItem.subscriptionGroupKey(): String {
@@ -359,6 +417,7 @@ private fun LocationItem.subscriptionGroupKey(): String {
 
 private fun LocationItem.subscriptionTitle(): String {
     val subscription = metadata?.subscription
+
     return listOfNotNull(
         subscription?.icon?.takeIf { it.isNotBlank() },
         subscription?.name?.takeIf { it.isNotBlank() } ?: "Subscriptions"
@@ -367,6 +426,7 @@ private fun LocationItem.subscriptionTitle(): String {
 
 private fun LocationItem.subscriptionDetails(): String? {
     val subscription = metadata?.subscription ?: return null
+
     return listOfNotNull(
         quotaText(subscription.used, subscription.available),
         subscriptionUpdateText(subscription.update),
@@ -400,6 +460,7 @@ private fun subscriptionUpdateText(update: String?): String? {
 
 private fun parseEpochMillis(value: String): Long? {
     val timestamp = value.toLongOrNull() ?: return null
+
     return when (timestamp) {
         in 1_000_000_000L..9_999_999_999L -> timestamp * 1_000L
         in 1_000_000_000_000L..9_999_999_999_999L -> timestamp

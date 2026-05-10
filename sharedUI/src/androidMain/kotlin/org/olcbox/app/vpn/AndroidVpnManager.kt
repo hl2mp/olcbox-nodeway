@@ -10,11 +10,16 @@ import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
@@ -219,7 +224,25 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        return checkConnection(locationConfig)
+        return OlcRtcConnectionChecker.ping(locationConfig)
+    }
+
+    suspend fun pingLocations(
+        locationConfigs: List<LocationConfig>,
+        parallelism: Int = DEFAULT_LOCATION_PING_PARALLELISM
+    ): Map<LocationConfig, Long?> = coroutineScope {
+        val semaphore = Semaphore(parallelism.coerceAtLeast(1))
+
+        locationConfigs
+            .map { locationConfig ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit {
+                        locationConfig to ping(locationConfig)
+                    }
+                }
+            }
+            .awaitAll()
+            .toMap()
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -316,6 +339,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val MAX_SOCKS_PASSWORD_LENGTH = 64
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+        const val DEFAULT_LOCATION_PING_PARALLELISM = 4
         val random = SecureRandom()
     }
 }

@@ -58,7 +58,9 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val pingsState = locationViewModel.pingsState
     val hasSubscriptions = locationViewModel.locations.any { !it.subscriptionUrl.isNullOrBlank() }
+
     val requiresSetup = !state.canStartVpn && !state.isVpnConnected && !state.isVpnLoading
+
     val primaryActionLabel = when {
         requiresSetup -> "SETUP"
         state.isVpnLoading || state.isVpnConnected -> "STOP"
@@ -69,17 +71,31 @@ fun HomeScreen(
         viewModel.refreshSubscriptions { updatedCount ->
             locationViewModel.loadLocations()
             viewModel.restartVpnIfRunning()
+
             val message = if (updatedCount > 0) {
                 "Subscriptions updated: $updatedCount"
             } else {
                 "No subscriptions to update"
             }
-            scope.launch { snackbarHostState.showSnackbar(message) }
+
+            scope.launch {
+                snackbarHostState.showSnackbar(message)
+            }
         }
     }
 
+    fun refreshHttpPings() {
+        locationViewModel.refreshPings(
+            performPing = { config ->
+                viewModel.performPingFor(config)
+            },
+        )
+    }
+
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(snackbarHostState)
+        },
         topBar = {
             HomeScreenAppBar(
                 onHistoryClick = { isLogsSheetOpen = true },
@@ -103,6 +119,7 @@ fun HomeScreen(
                 isActive = state.isVpnConnected,
                 requiresSetup = requiresSetup
             )
+
             Spacer(modifier = Modifier.height(16.dp))
 
             StartButton(
@@ -124,11 +141,11 @@ fun HomeScreen(
 
             LocationSelectorScreen(
                 onRefreshClick = {
-                    scope.launch {
-                        locationViewModel.refreshPings { viewModel.checkConnectionFor(it) }
-                    }
+                    refreshHttpPings()
                 },
-                onAddSubscriptionClick = { isAddSheetOpen = true },
+                onAddSubscriptionClick = {
+                    isAddSheetOpen = true
+                },
                 locations = locationViewModel.locations,
                 selectedLocationId = locationViewModel.selectedLocationId,
                 pingsState = pingsState,
@@ -151,15 +168,26 @@ fun HomeScreen(
 
         if (isLogsSheetOpen) {
             val logs by viewModel.logs.collectAsState()
+
             LogsSheet(
                 logs = logs,
                 onSaveClick = {
                     onSaveLogsRequested(
-                        { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
-                        { message -> scope.launch { snackbarHostState.showSnackbar(message) } }
+                        { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        },
+                        { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        }
                     )
                 },
-                onDismiss = { isLogsSheetOpen = false }
+                onDismiss = {
+                    isLogsSheetOpen = false
+                }
             )
         }
 
@@ -167,7 +195,9 @@ fun HomeScreen(
             AddConfigurationSheet(
                 canScanQr = canScanQr,
                 hasSubscriptions = hasSubscriptions,
-                onDismiss = { isAddSheetOpen = false },
+                onDismiss = {
+                    isAddSheetOpen = false
+                },
                 onScanQrClick = {
                     isAddSheetOpen = false
                     onScanQrRequested()
@@ -175,7 +205,9 @@ fun HomeScreen(
                 onPasteLinkClick = {
                     isAddSheetOpen = false
                     onImportFromClipboardRequested()
-                    scope.launch { snackbarHostState.showSnackbar("Imported from clipboard") }
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Imported from clipboard")
+                    }
                 },
                 onImportFileClick = {
                     isAddSheetOpen = false

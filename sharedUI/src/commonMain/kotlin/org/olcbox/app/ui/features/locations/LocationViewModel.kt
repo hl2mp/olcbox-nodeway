@@ -8,11 +8,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
@@ -28,9 +30,23 @@ data class LocationItem(
 
 sealed class PingsState {
     object Idle : PingsState()
-    data class Loading(val lastPings: Map<String, Int?>? = null) : PingsState()
-    data class Success(val pings: Map<String, Int?>) : PingsState()
-    data class Error(val message: String) : PingsState()
+
+    data class Loading(
+        val lastPings: Map<String, Int?>? = null,
+        val currentPings: Map<String, Int?> = emptyMap(),
+        val pendingLocationIds: Set<String> = emptySet(),
+        val completed: Int = 0,
+        val total: Int = 0
+    ) : PingsState()
+
+    data class Success(
+        val pings: Map<String, Int?>
+    ) : PingsState()
+
+    data class Error(
+        val message: String,
+        val lastPings: Map<String, Int?>? = null
+    ) : PingsState()
 }
 
 class LocationViewModel(
@@ -68,10 +84,14 @@ class LocationViewModel(
         private set
 
     val isFormValid: Boolean
-        get() = nameError == null && serverError == null && keyError == null && clientIdError == null &&
-                editingName.isNotBlank() && editingConfig.id.isNotBlank() &&
-                editingConfig.key.isNotBlank() && editingConfig.clientId.isNotBlank()
-
+        get() = nameError == null &&
+                serverError == null &&
+                keyError == null &&
+                clientIdError == null &&
+                editingName.isNotBlank() &&
+                editingConfig.id.isNotBlank() &&
+                editingConfig.key.isNotBlank() &&
+                editingConfig.clientId.isNotBlank()
 
     init {
         loadLocations()
@@ -97,7 +117,13 @@ class LocationViewModel(
                 )
             }
 
-            if (locations.isNotEmpty() && (currentSelectedId.isNullOrBlank() || locations.none { it.storageId == currentSelectedId })) {
+            if (
+                locations.isNotEmpty() &&
+                (
+                        currentSelectedId.isNullOrBlank() ||
+                                locations.none { it.storageId == currentSelectedId }
+                        )
+            ) {
                 val nextId = locations.firstOrNull()?.storageId
                 locationsRepository.setActiveLocationId(nextId)
                 selectedLocationId = nextId
@@ -115,28 +141,113 @@ class LocationViewModel(
         }
     }
 
-    fun refreshPings(performPing: suspend (LocationConfig) -> Long?) {
-        val previousPings = (pingsState as? PingsState.Success)?.pings
-            ?: (pingsState as? PingsState.Loading)?.lastPings
+    fun refreshPings(
+        performPing: suspend (LocationConfig) -> Long?,
+        onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
+        onError: (String) -> Unit = {}
+    ) {
+        val previousPings = when (val state = pingsState) {
+            is PingsState.Success -> state.pings
+            is PingsState.Loading -> state.currentPings.ifEmpty { state.lastPings.orEmpty() }
+            is PingsState.Error -> state.lastPings
+            PingsState.Idle -> null
+        }
+
         val locationsSnapshot = locations.toList()
+        val pingableLocations = locationsSnapshot.filter { location ->
+            location.config?.isComplete() == true
+        }
 
         refreshPingsJob?.cancel()
+
         refreshPingsJob = viewModelScope.launch {
-            pingsState = PingsState.Loading(lastPings = previousPings)
+            if (locationsSnapshot.isEmpty()) {
+                pingsState = PingsState.Success(emptyMap())
+                onComplete(0, 0)
+                return@launch
+            }
+
+            if (pingableLocations.isEmpty()) {
+                val emptyResults = locationsSnapshot.associate { it.storageId to null }
+                pingsState = PingsState.Success(emptyResults)
+                onComplete(0, locationsSnapshot.size)
+                return@launch
+            }
+
+            val results = mutableMapOf<String, Int?>()
+            val pendingIds = pingableLocations.map { it.storageId }.toMutableSet()
+            val resultChannel = Channel<Pair<String, Int?>>(Channel.UNLIMITED)
+
+            pingsState = PingsState.Loading(
+                lastPings = previousPings,
+                currentPings = emptyMap(),
+                pendingLocationIds = pendingIds.toSet(),
+                completed = 0,
+                total = pingableLocations.size
+            )
+
             try {
-                val results = supervisorScope {
-                    locationsSnapshot.map { location ->
-                        async {
-                            location.storageId to checkLocationPing(location, performPing)?.toInt()
+                supervisorScope {
+                    val semaphore = Semaphore(LOCATION_PING_PARALLELISM)
+
+                    val jobs = pingableLocations.map { location ->
+                        launch {
+                            val ping = try {
+                                semaphore.withPermit {
+                                    checkLocationPing(location, performPing)?.toInt()
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                null
+                            }
+
+                            resultChannel.send(location.storageId to ping)
                         }
-                    }.awaitAll().toMap()
+                    }
+
+                    repeat(pingableLocations.size) {
+                        val (locationId, pingMs) = resultChannel.receive()
+
+                        results[locationId] = pingMs
+                        pendingIds.remove(locationId)
+
+                        pingsState = PingsState.Loading(
+                            lastPings = previousPings,
+                            currentPings = results.toMap(),
+                            pendingLocationIds = pendingIds.toSet(),
+                            completed = results.size,
+                            total = pingableLocations.size
+                        )
+                    }
+
+                    jobs.joinAll()
                 }
 
-                pingsState = PingsState.Success(results)
+                resultChannel.close()
+
+                val finalResults = locationsSnapshot.associate { location ->
+                    location.storageId to results[location.storageId]
+                }
+
+                pingsState = PingsState.Success(finalResults)
+
+                val onlineCount = finalResults.values.count { it != null }
+                onComplete(onlineCount, finalResults.size)
             } catch (e: CancellationException) {
+                resultChannel.close()
                 throw e
             } catch (e: Exception) {
-                pingsState = PingsState.Error(e.message ?: "Error")
+                resultChannel.close()
+
+                val message = e.message ?: "HTTP ping failed"
+
+                pingsState = PingsState.Error(
+                    message = message,
+                    lastPings = previousPings
+                )
+
+                onError(message)
             }
         }
     }
@@ -146,6 +257,7 @@ class LocationViewModel(
         performPing: suspend (LocationConfig) -> Long?
     ): Long? {
         val config = location.config?.takeIf { it.isComplete() } ?: return null
+
         return withTimeoutOrNull(LOCATION_PING_TIMEOUT_MS) {
             repeat(LOCATION_PING_ATTEMPTS) { attempt ->
                 val result = try {
@@ -155,11 +267,16 @@ class LocationViewModel(
                 } catch (_: Exception) {
                     null
                 }
-                if (result != null) return@withTimeoutOrNull result
+
+                if (result != null) {
+                    return@withTimeoutOrNull result
+                }
+
                 if (attempt < LOCATION_PING_ATTEMPTS - 1) {
                     delay(LOCATION_PING_RETRY_DELAY_MS)
                 }
             }
+
             null
         }
     }
@@ -182,7 +299,6 @@ class LocationViewModel(
             editingName = editingConfig.displayName()
         }
     }
-
 
     fun onNameChanged(value: String) {
         editingName = value
@@ -208,6 +324,7 @@ class LocationViewModel(
 
     fun onBypassProviderChanged(value: String) {
         val provider = LocationConfig.normalizeProvider(value)
+
         editingConfig = editingConfig.copy(
             bypassProvider = provider,
             transport = LocationConfig.normalizeTransport(editingConfig.transport, provider)
@@ -275,13 +392,19 @@ class LocationViewModel(
 
         viewModelScope.launch {
             isSaving = true
+
             val id = editingId ?: "custom_${(100..999).random()}"
             val finalConfig = editingConfig.copy(name = editingName).normalized()
+
             locationsRepository.saveLocation(id, finalConfig)
             locationsRepository.setActiveLocationId(id)
+
             loadLocations()
+
             delay(600)
+
             onComplete()
+
             isSaving = false
         }
     }
@@ -295,8 +418,9 @@ class LocationViewModel(
     }
 
     private companion object {
-        const val LOCATION_PING_ATTEMPTS = 2
-        const val LOCATION_PING_TIMEOUT_MS = 30_000L
-        const val LOCATION_PING_RETRY_DELAY_MS = 250L
+        const val LOCATION_PING_ATTEMPTS = 1
+        const val LOCATION_PING_TIMEOUT_MS = 12_000L
+        const val LOCATION_PING_RETRY_DELAY_MS = 0L
+        const val LOCATION_PING_PARALLELISM = 4
     }
 }
