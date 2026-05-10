@@ -1,10 +1,10 @@
 package org.olcbox.app.vpn
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mobile.Mobile
 import org.olcbox.app.data.model.LocationConfig
-import org.olcbox.app.vpn.OlcRtcConnectionChecker.HTTP_PING_ATTEMPTS
 import java.net.ServerSocket
 
 internal object OlcRtcConnectionChecker {
@@ -15,7 +15,8 @@ internal object OlcRtcConnectionChecker {
 
             repeat(CONNECTION_CHECK_ATTEMPTS) {
                 val socksPort = allocateLocalPort()
-                val result = runCatching {
+
+                val result: Long? = runCatching {
                     Mobile.check(
                         config.bypassProvider,
                         config.transport,
@@ -29,7 +30,9 @@ internal object OlcRtcConnectionChecker {
                     )
                 }.getOrNull()
 
-                if (result != null && result > 0L) return@withContext result
+                if (result != null && result > 0L) {
+                    return@withContext result
+                }
             }
 
             null
@@ -43,7 +46,8 @@ internal object OlcRtcConnectionChecker {
 
             repeat(HTTP_PING_ATTEMPTS) {
                 val socksPort = allocateLocalPort()
-                val result = runCatching {
+
+                val result: Long? = runCatching {
                     Mobile.ping(
                         config.bypassProvider,
                         config.transport,
@@ -57,10 +61,12 @@ internal object OlcRtcConnectionChecker {
                         config.vp8Batch.toLong()
                     )
                 }.onFailure {
-                    android.util.Log.e("OlcRtcConnectionChecker", "HTTP ping failed", it)
+                    Log.e("OlcRtcConnectionChecker", "HTTP ping failed", it)
                 }.getOrNull()
 
-                if (result != null && result >= 0L) return@withContext result
+                if (result != null && result >= 0L) {
+                    return@withContext result
+                }
             }
 
             null
@@ -76,5 +82,5 @@ internal object OlcRtcConnectionChecker {
 
     private const val HTTP_PING_ATTEMPTS = 1
     private const val HTTP_PING_TIMEOUT_MS = 8_000L
-    private const val HTTP_PING_URL = "https://www.google.com/generate_204"
+    private const val HTTP_PING_URL = "https://ya.ru/"
 }
