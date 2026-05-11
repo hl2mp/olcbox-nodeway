@@ -62,7 +62,8 @@ class LocationViewModel(
     var pingsState by mutableStateOf<PingsState>(PingsState.Idle)
         private set
 
-    private var refreshPingsJob: Job? = null
+    private val activePingJobs = mutableMapOf<String, Job>()
+    private val pingSemaphore = Semaphore(LOCATION_PING_PARALLELISM)
 
     var editingConfig by mutableStateOf(LocationConfig())
     var editingName by mutableStateOf("")
@@ -142,114 +143,89 @@ class LocationViewModel(
     }
 
     fun refreshPings(
+        targetLocationIds: List<String>? = null,
         performPing: suspend (LocationConfig) -> Long?,
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (String) -> Unit = {}
     ) {
-        val previousPings = when (val state = pingsState) {
-            is PingsState.Success -> state.pings
-            is PingsState.Loading -> state.currentPings.ifEmpty { state.lastPings.orEmpty() }
-            is PingsState.Error -> state.lastPings
-            PingsState.Idle -> null
-        }
+        val previousPings = currentPingsSnapshot()
 
         val locationsSnapshot = locations.toList()
-        val pingableLocations = locationsSnapshot.filter { location ->
-            location.config?.isComplete() == true
-        }
 
-        refreshPingsJob?.cancel()
+        val pingableLocations = locationsSnapshot
+            .filter { location ->
+                location.config?.isComplete() == true &&
+                        (targetLocationIds == null || targetLocationIds.contains(location.storageId))
+            }
+            // Не запускаем второй ping для той же самой локации, если она уже проверяется
+            .filterNot { location ->
+                activePingJobs.containsKey(location.storageId)
+            }
 
-        refreshPingsJob = viewModelScope.launch {
-            if (locationsSnapshot.isEmpty()) {
+        if (locationsSnapshot.isEmpty()) {
+            if (activePingJobs.isEmpty()) {
                 pingsState = PingsState.Success(emptyMap())
-                onComplete(0, 0)
-                return@launch
             }
-
-            if (pingableLocations.isEmpty()) {
-                val emptyResults = locationsSnapshot.associate { it.storageId to null }
-                pingsState = PingsState.Success(emptyResults)
-                onComplete(0, locationsSnapshot.size)
-                return@launch
-            }
-
-            val results = mutableMapOf<String, Int?>()
-            val pendingIds = pingableLocations.map { it.storageId }.toMutableSet()
-            val resultChannel = Channel<Pair<String, Int?>>(Channel.UNLIMITED)
-
-            pingsState = PingsState.Loading(
-                lastPings = previousPings,
-                currentPings = emptyMap(),
-                pendingLocationIds = pendingIds.toSet(),
-                completed = 0,
-                total = pingableLocations.size
-            )
-
-            try {
-                supervisorScope {
-                    val semaphore = Semaphore(LOCATION_PING_PARALLELISM)
-
-                    val jobs = pingableLocations.map { location ->
-                        launch {
-                            val ping = try {
-                                semaphore.withPermit {
-                                    checkLocationPing(location, performPing)?.toInt()
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                null
-                            }
-
-                            resultChannel.send(location.storageId to ping)
-                        }
-                    }
-
-                    repeat(pingableLocations.size) {
-                        val (locationId, pingMs) = resultChannel.receive()
-
-                        results[locationId] = pingMs
-                        pendingIds.remove(locationId)
-
-                        pingsState = PingsState.Loading(
-                            lastPings = previousPings,
-                            currentPings = results.toMap(),
-                            pendingLocationIds = pendingIds.toSet(),
-                            completed = results.size,
-                            total = pingableLocations.size
-                        )
-                    }
-
-                    jobs.joinAll()
-                }
-
-                resultChannel.close()
-
-                val finalResults = locationsSnapshot.associate { location ->
-                    location.storageId to results[location.storageId]
-                }
-
-                pingsState = PingsState.Success(finalResults)
-
-                val onlineCount = finalResults.values.count { it != null }
-                onComplete(onlineCount, finalResults.size)
-            } catch (e: CancellationException) {
-                resultChannel.close()
-                throw e
-            } catch (e: Exception) {
-                resultChannel.close()
-
-                val message = e.message ?: "HTTP ping failed"
-
-                pingsState = PingsState.Error(
-                    message = message,
-                    lastPings = previousPings
-                )
-
-                onError(message)
-            }
+            onComplete(0, 0)
+            return
         }
+
+        if (pingableLocations.isEmpty()) {
+            onComplete(0, 0)
+            return
+        }
+
+        var completedForThisRequest = 0
+        var onlineForThisRequest = 0
+        val totalForThisRequest = pingableLocations.size
+
+        pingableLocations.forEach { location ->
+            val job = viewModelScope.launch {
+                try {
+                    val ping = try {
+                        pingSemaphore.withPermit {
+                            checkLocationPing(location, performPing)?.toInt()
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    val updatedPings = currentPingsSnapshot().toMutableMap()
+                    updatedPings[location.storageId] = ping
+
+                    activePingJobs.remove(location.storageId)
+
+                    if (ping != null) {
+                        onlineForThisRequest++
+                    }
+
+                    completedForThisRequest++
+
+                    emitPingState(updatedPings.toMap())
+
+                    if (completedForThisRequest == totalForThisRequest) {
+                        onComplete(onlineForThisRequest, totalForThisRequest)
+                    }
+                } catch (e: CancellationException) {
+                    activePingJobs.remove(location.storageId)
+                    emitPingState()
+                    throw e
+                } catch (e: Exception) {
+                    activePingJobs.remove(location.storageId)
+
+                    val message = e.message ?: "HTTP ping failed"
+                    onError(message)
+
+                    emitPingState()
+                }
+            }
+
+            activePingJobs[location.storageId] = job
+        }
+
+        emitPingState(previousPings)
     }
 
     private suspend fun checkLocationPing(
@@ -414,6 +390,44 @@ class LocationViewModel(
             locationsRepository.deleteLocation(id)
             loadLocations()
             onComplete()
+        }
+    }
+
+    private fun currentPingsSnapshot(): Map<String, Int?> {
+        return when (val state = pingsState) {
+            PingsState.Idle -> emptyMap()
+
+            is PingsState.Loading -> {
+                state.currentPings.ifEmpty {
+                    state.lastPings.orEmpty()
+                }
+            }
+
+            is PingsState.Success -> {
+                state.pings
+            }
+
+            is PingsState.Error -> {
+                state.lastPings.orEmpty()
+            }
+        }
+    }
+
+    private fun emitPingState(
+        pings: Map<String, Int?> = currentPingsSnapshot()
+    ) {
+        val pendingIds = activePingJobs.keys.toSet()
+
+        pingsState = if (pendingIds.isEmpty()) {
+            PingsState.Success(pings)
+        } else {
+            PingsState.Loading(
+                lastPings = pings,
+                currentPings = pings,
+                pendingLocationIds = pendingIds,
+                completed = 0,
+                total = pendingIds.size
+            )
         }
     }
 

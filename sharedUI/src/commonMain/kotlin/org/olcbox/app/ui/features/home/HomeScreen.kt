@@ -84,8 +84,9 @@ fun HomeScreen(
         }
     }
 
-    fun refreshHttpPings() {
+    fun refreshHttpPings(targetLocationIds: List<String>? = null) {
         locationViewModel.refreshPings(
+            targetLocationIds = targetLocationIds,
             performPing = { config ->
                 viewModel.performPingFor(config)
             },
@@ -137,11 +138,11 @@ fun HomeScreen(
                 }
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             LocationSelectorScreen(
-                onRefreshClick = {
-                    refreshHttpPings()
+                onRefreshClick = { targetIds ->
+                    refreshHttpPings(targetIds)
                 },
                 onAddSubscriptionClick = {
                     isAddSheetOpen = true

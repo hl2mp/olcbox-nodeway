@@ -1,10 +1,17 @@
 package org.olcbox.app.ui.features.locations.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +36,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +47,7 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.ui.features.locations.LocationItem
 import org.olcbox.app.util.parseEmojiAndName
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LocationRow(
     location: LocationItem,
@@ -84,7 +94,12 @@ fun LocationRow(
             .clip(RoundedCornerShape(16.dp))
             .background(bgColor)
             .border(borderWidth, borderColor, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    if (settingsEnabled) onSettingsClick()
+                }
+            )
             .padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
         if (emoji.isNotEmpty()) {
@@ -108,28 +123,10 @@ fun LocationRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        if (settingsEnabled) {
-            IconButton(
-                onClick = onSettingsClick,
-                content = {
-                    Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            )
-        }
-
-
+        
         when {
             isLoading -> {
-                Text(
-                    text = "Checking",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                ShimmeringPingSkeleton()
             }
 
             pingMs != null -> {
@@ -151,7 +148,22 @@ fun LocationRow(
             }
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(12.dp))
+
+        if (settingsEnabled) {
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
 
         LocationSelectionIndicator(isSelected = isSelected)
     }
@@ -202,4 +214,36 @@ private fun LocationSelectionIndicator(isSelected: Boolean) {
             Box(modifier = Modifier.size(24.dp))
         }
     }
+}
+
+@Composable
+private fun ShimmeringPingSkeleton() {
+    val transition = rememberInfiniteTransition(label = "shimmer_transition")
+    val translateAnim by transition.animateFloat(
+        initialValue = -50f,
+        targetValue = 150f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_anim"
+    )
+
+    val brush = Brush.linearGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.05f),
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.05f),
+        ),
+        start = Offset(translateAnim, 0f),
+        end = Offset(translateAnim + 50f, 50f)
+    )
+
+    Box(
+        modifier = Modifier
+            .width(42.dp)
+            .height(18.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(brush)
+    )
 }

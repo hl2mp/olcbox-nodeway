@@ -23,15 +23,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import org.olcbox.app.ui.features.locations.PingsState
 
 @Composable
 fun RefreshButton(
-    state: PingsState,
+    isRefreshing: Boolean,
     onClick: () -> Unit,
     tint: Color
 ) {
-    val rotation by if (state is PingsState.Loading) {
+    val rotation by if (isRefreshing) {
         val infiniteTransition = rememberInfiniteTransition()
         infiniteTransition.animateFloat(
             initialValue = 0f,
