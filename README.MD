@@ -8,10 +8,6 @@
   <img src="docs/screenshots/photo_2026-05-05_20-40-45.jpg" alt="Olcbox split tunneling settings screen" width="200">
 </p>
 
-<p>
-  Сбор на iOS-версию приложения: нужно оплатить Apple Developer Account за $100.
-</p>
-
 ## Status
 Alpha version.
 Not intended for production use.
