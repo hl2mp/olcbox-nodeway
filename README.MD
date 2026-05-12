@@ -14,7 +14,7 @@
   </a>
 </p>
 
-<p align="center">
+<p>
   Сбор на iOS-версию приложения: нужно оплатить Apple Developer Account за $100.
 </p>
 
