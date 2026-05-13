@@ -27,6 +27,7 @@ import org.olcbox.app.update.AppUpdateSettings
 import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.AndroidUpdateInstaller
 import org.olcbox.app.update.identity
+import org.olcbox.app.update.isDownloaded
 import org.olcbox.app.update.isUpdateCheckDue
 import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.ui.OlcboxAppContent
@@ -154,10 +155,14 @@ fun AndroidMainScreen(
     }
 
     fun showUpdateResult(info: AppUpdateInfo) {
-        if (info.isUpdateAvailable) {
+        if (info.isDownloaded(updateSettings)) {
+            updateOffer = null
+            updateStatusText = "Latest ${info.channel.name.lowercase()} is already downloaded"
+        } else if (info.isUpdateAvailable) {
             updateOffer = info
             updateStatusText = "${info.channel.name} update available: ${info.version}"
         } else {
+            updateOffer = null
             updateStatusText = "Olcbox is up to date"
         }
     }
@@ -173,13 +178,16 @@ fun AndroidMainScreen(
             updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = service.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
-            saveUpdateSettings(previousSettings.copy(lastCheckAtEpochMs = checkedAt))
+            val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
+            saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
+                    if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
                         showUpdateResult(info)
                     } else if (!info.isUpdateAvailable) {
                         updateStatusText = "Olcbox is up to date"
+                    } else {
+                        updateStatusText = null
                     }
                 },
                 onFailure = { error ->
@@ -210,7 +218,12 @@ fun AndroidMainScreen(
                 return@launch
             }
             updateStatusText = "Installing ${info.asset.name}"
-            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+            saveUpdateSettings(
+                updateSettings.copy(
+                    lastSeenUpdateVersion = info.identity(),
+                    lastDownloadedUpdateVersion = info.identity()
+                )
+            )
             updateOffer = null
             updateDownloadProgress = null
             relaunchAfterInstall = true

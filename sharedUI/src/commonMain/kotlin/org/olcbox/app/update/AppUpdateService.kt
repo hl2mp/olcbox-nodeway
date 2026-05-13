@@ -38,7 +38,8 @@ data class ReleaseMirror(
 data class AppUpdateAsset(
     val name: String,
     val downloadUrl: String,
-    val sizeBytes: Long?
+    val sizeBytes: Long?,
+    val updatedAt: String? = null
 )
 
 data class AppUpdateInfo(
@@ -70,11 +71,15 @@ class AppUpdateService(
 
         AppUpdateInfo(
             channel = channel,
-            version = release.tagName.removePrefix("v"),
+            version = updateVersion(channel, release.tagName, asset),
             htmlUrl = release.htmlUrl,
             publishedAt = release.publishedAt,
             asset = asset,
-            isUpdateAvailable = isUpdateAvailable(channel, release.tagName, currentVersion)
+            isUpdateAvailable = isUpdateAvailable(
+                channel = channel,
+                releaseTag = updateVersion(channel, release.tagName, asset),
+                currentVersion = currentVersion
+            )
         )
     }
 
@@ -117,7 +122,8 @@ class AppUpdateService(
                 AppUpdateAsset(
                     name = it.name,
                     downloadUrl = it.browserDownloadUrl,
-                    sizeBytes = it.size
+                    sizeBytes = it.size,
+                    updatedAt = it.updatedAt
                 )
             }
         }
@@ -127,9 +133,9 @@ class AppUpdateService(
             releaseTag: String,
             currentVersion: String
         ): Boolean {
-            if (channel == ReleaseChannel.Nightly) return true
-
             val release = releaseTag.removePrefix("v")
+            if (channel == ReleaseChannel.Nightly && release == "nightly") return true
+
             return compareVersions(release, currentVersion) > 0
         }
 
@@ -142,6 +148,24 @@ class AppUpdateService(
                 if (diff != 0) return diff
             }
             return 0
+        }
+
+        private fun updateVersion(
+            channel: ReleaseChannel,
+            releaseTag: String,
+            asset: AppUpdateAsset
+        ): String {
+            return when (channel) {
+                ReleaseChannel.Stable -> releaseTag.removePrefix("v")
+                ReleaseChannel.Nightly -> asset.name.versionToken() ?: releaseTag.removePrefix("v")
+            }
+        }
+
+        private fun String.versionToken(): String? {
+            return Regex("""(?:^|[-_])v?(\d+\.\d+\.\d+)(?:[-_.]|$)""")
+                .find(this)
+                ?.groupValues
+                ?.getOrNull(1)
         }
     }
 }
@@ -191,7 +215,9 @@ data class GithubReleaseAsset(
     val name: String,
     @SerialName("browser_download_url")
     val browserDownloadUrl: String,
-    val size: Long? = null
+    val size: Long? = null,
+    @SerialName("updated_at")
+    val updatedAt: String? = null
 )
 
 private val json = Json {

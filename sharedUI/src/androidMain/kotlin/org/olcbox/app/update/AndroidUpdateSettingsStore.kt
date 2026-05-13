@@ -23,7 +23,8 @@ class AndroidUpdateSettingsStore(context: Context) : AppUpdateSettingsStore {
                 AppUpdateSettings.DEFAULT_INTERVAL_HOURS
             ),
             lastCheckAtEpochMs = lastCheck,
-            lastSeenUpdateVersion = preferences.getString(KEY_LAST_SEEN, null)
+            lastSeenUpdateVersion = preferences.getString(KEY_LAST_SEEN, null),
+            lastDownloadedUpdateVersion = preferences.getString(KEY_LAST_DOWNLOADED, null)
         ).normalized()
     }
 
@@ -34,6 +35,7 @@ class AndroidUpdateSettingsStore(context: Context) : AppUpdateSettingsStore {
             .putInt(KEY_INTERVAL_HOURS, normalized.intervalHours)
             .putLong(KEY_LAST_CHECK, normalized.lastCheckAtEpochMs ?: 0L)
             .putString(KEY_LAST_SEEN, normalized.lastSeenUpdateVersion)
+            .putString(KEY_LAST_DOWNLOADED, normalized.lastDownloadedUpdateVersion)
             .apply()
     }
 
@@ -42,5 +44,6 @@ class AndroidUpdateSettingsStore(context: Context) : AppUpdateSettingsStore {
         const val KEY_INTERVAL_HOURS = "update_interval_hours"
         const val KEY_LAST_CHECK = "last_update_check_at_epoch_ms"
         const val KEY_LAST_SEEN = "last_seen_update_version"
+        const val KEY_LAST_DOWNLOADED = "last_downloaded_update_version"
     }
 }

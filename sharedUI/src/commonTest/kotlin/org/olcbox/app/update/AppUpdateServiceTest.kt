@@ -1,5 +1,10 @@
 package org.olcbox.app.update
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import kotlinx.coroutines.test.runTest
+import org.olcbox.app.data.identity.DeviceIdentityProvider
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,6 +16,42 @@ class AppUpdateServiceTest {
         assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Stable, "v1.2.0", "1.1.9"))
         assertFalse(AppUpdateService.isUpdateAvailable(ReleaseChannel.Stable, "v1.0.0", "1.0.0"))
         assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "nightly", "9.9.9"))
+        assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "1.0.2", "1.0.1"))
+        assertFalse(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "1.0.2", "1.0.2"))
+    }
+
+    @Test
+    fun nightlyUsesVersionFromAssetNameWhenAvailable() = runTest {
+        val engine = MockEngine {
+            respond(
+                """
+                {
+                  "tag_name": "nightly",
+                  "html_url": "https://example/release",
+                  "published_at": "2026-05-13T12:00:00Z",
+                  "assets": [
+                    {
+                      "name": "Olcbox-1.0.42-android-release.apk",
+                      "browser_download_url": "https://example/app.apk",
+                      "size": 100,
+                      "updated_at": "2026-05-13T12:00:00Z"
+                    }
+                  ]
+                }
+                """.trimIndent()
+            )
+        }
+        val service = AppUpdateService(
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid"),
+            currentVersion = "1.0.42",
+            platform = UpdatePlatform("android", "arm64")
+        )
+
+        val info = service.check(ReleaseChannel.Nightly).getOrThrow()
+
+        assertEquals("1.0.42", info.version)
+        assertFalse(info.isUpdateAvailable)
     }
 
     @Test
@@ -50,7 +91,7 @@ class AppUpdateServiceTest {
         )
         val store = InMemoryAppUpdateSettingsStore()
 
-        kotlinx.coroutines.test.runTest {
+        runTest {
             store.save(settings)
 
             assertEquals(settings, store.load())
@@ -80,5 +121,11 @@ class AppUpdateServiceTest {
         assertFalse(info.shouldShowOffer(settings, 10_000L + 2L * 60L * 60L * 1_000L))
         assertTrue(info.shouldShowOffer(settings, 10_000L + 6L * 60L * 60L * 1_000L))
         assertTrue(info.copy(asset = asset.copy(name = "olcbox-android-new.apk")).shouldShowOffer(settings, 10_001L))
+    }
+
+    private class StaticIdentityProvider(
+        private val value: String
+    ) : DeviceIdentityProvider {
+        override suspend fun hwid(): String = value
     }
 }

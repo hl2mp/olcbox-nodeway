@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  OLCBOX_VERSION: 1.0.${{ github.run_number }}
+  OLCBOX_VERSION_CODE: ${{ github.run_number }}
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -50,7 +54,7 @@ jobs:
         working-directory: olcbox
         run: |
           $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
-          .\gradlew.bat :desktopApp:packageReleaseExe :desktopApp:packageReleaseMsi :desktopApp:packageReleasePortableZip --stacktrace
+          .\gradlew.bat -Polcbox.version="$env:OLCBOX_VERSION" :desktopApp:packageReleaseExe :desktopApp:packageReleaseMsi :desktopApp:packageReleasePortableZip --stacktrace
 
       - name: Prepare asset
         shell: pwsh
@@ -72,9 +76,9 @@ jobs:
             Compress-Archive -Path $appImage.FullName -DestinationPath $portableZip -Force
             $zip = Get-Item $portableZip
           }
-          Copy-Item $exe.FullName "dist/Olcbox-windows-amd64.exe"
-          Copy-Item $msi.FullName "dist/Olcbox-windows-amd64.msi"
-          Copy-Item $zip.FullName "dist/Olcbox-windows-amd64-portable.zip"
+          Copy-Item $exe.FullName "dist/Olcbox-${env:OLCBOX_VERSION}-windows-amd64.exe"
+          Copy-Item $msi.FullName "dist/Olcbox-${env:OLCBOX_VERSION}-windows-amd64.msi"
+          Copy-Item $zip.FullName "dist/Olcbox-${env:OLCBOX_VERSION}-windows-amd64-portable.zip"
 
       - name: Sign Windows release assets
         shell: pwsh
@@ -113,10 +117,12 @@ jobs:
             }
           }
 
-          Sign-File "dist/Olcbox-windows-amd64.exe"
-          Sign-File "dist/Olcbox-windows-amd64.msi"
+          $exeAsset = Get-ChildItem "dist/Olcbox-*-windows-amd64.exe" | Select-Object -First 1
+          $msiAsset = Get-ChildItem "dist/Olcbox-*-windows-amd64.msi" | Select-Object -First 1
+          Sign-File $exeAsset.FullName
+          Sign-File $msiAsset.FullName
 
-          $portableZip = "dist/Olcbox-windows-amd64-portable.zip"
+          $portableZip = (Get-ChildItem "dist/Olcbox-*-windows-amd64-portable.zip" | Select-Object -First 1).FullName
           $portableDir = Join-Path $env:RUNNER_TEMP "olcbox-portable-sign"
           Remove-Item $portableDir -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path $portableZip -DestinationPath $portableDir
@@ -131,9 +137,9 @@ jobs:
         with:
           name: Olcbox-windows-amd64
           path: |
-            olcbox/dist/Olcbox-windows-amd64.exe
-            olcbox/dist/Olcbox-windows-amd64.msi
-            olcbox/dist/Olcbox-windows-amd64-portable.zip
+            olcbox/dist/Olcbox-*-windows-amd64.exe
+            olcbox/dist/Olcbox-*-windows-amd64.msi
+            olcbox/dist/Olcbox-*-windows-amd64-portable.zip
 
   build-macos:
     strategy:
@@ -178,19 +184,19 @@ jobs:
         working-directory: olcbox
         run: |
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
-          ./gradlew :desktopApp:packageReleaseDmg --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" :desktopApp:packageReleaseDmg --stacktrace
 
       - name: Prepare asset
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg dist/Olcbox-macos-${{ matrix.arch }}.dmg
+          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg "dist/Olcbox-${OLCBOX_VERSION}-macos-${{ matrix.arch }}.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Olcbox-macos-${{ matrix.arch }}-dmg
-          path: olcbox/dist/Olcbox-macos-${{ matrix.arch }}.dmg
+          path: olcbox/dist/Olcbox-*-macos-${{ matrix.arch }}.dmg
 
   build-linux:
     runs-on: ubuntu-latest
@@ -240,19 +246,19 @@ jobs:
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export APPIMAGETOOL=/tmp/appimagetool.AppImage
           export APPIMAGE_EXTRACT_AND_RUN=1
-          ./gradlew :desktopApp:packageReleaseLinuxAppImage --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" :desktopApp:packageReleaseLinuxAppImage --stacktrace
 
       - name: Prepare asset
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/appimage/*.AppImage dist/Olcbox-linux-amd64.AppImage
+          cp desktopApp/build/compose/binaries/main-release/appimage/*.AppImage "dist/Olcbox-${OLCBOX_VERSION}-linux-amd64.AppImage"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Olcbox-linux-amd64-appimage
-          path: olcbox/dist/Olcbox-linux-amd64.AppImage
+          path: olcbox/dist/Olcbox-*-linux-amd64.AppImage
 
   build-android:
     runs-on: ubuntu-latest
@@ -341,19 +347,19 @@ jobs:
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew :sharedUI:jvmTest :androidApp:assembleRelease --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :sharedUI:jvmTest :androidApp:assembleRelease --stacktrace
 
       - name: Prepare Android release assets
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp androidApp/build/outputs/apk/release/*.apk dist/Olcbox-android-release.apk
+          cp androidApp/build/outputs/apk/release/*.apk "dist/Olcbox-${OLCBOX_VERSION}-android-release.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Olcbox-android-apk
-          path: olcbox/dist/Olcbox-android-release.apk
+          path: olcbox/dist/Olcbox-*-android-release.apk
 
   publish-nightly:
     runs-on: ubuntu-latest
@@ -394,6 +400,8 @@ jobs:
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Source branch: \`${GITHUB_REF_NAME}\`"
+            echo "- App version: \`${OLCBOX_VERSION}\`"
+            echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
             echo "- Workflow: \`.github/workflows/windows-exe.yml\`"
             echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo

@@ -98,6 +98,7 @@ import org.olcbox.app.update.JvmUpdateInstaller
 import org.olcbox.app.update.JvmUpdateSettingsStore
 import org.olcbox.app.update.ReleaseChannel
 import org.olcbox.app.update.identity
+import org.olcbox.app.update.isDownloaded
 import org.olcbox.app.update.isUpdateCheckDue
 import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.DesktopSocksProxySettings
@@ -166,15 +167,20 @@ fun main() = application {
             updateMessage = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = dependencies.updateService.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
-            saveUpdateSettings(previousSettings.copy(lastCheckAtEpochMs = checkedAt))
+            val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
+            saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
-                        if (info.isUpdateAvailable) {
+                    if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
+                        if (info.isDownloaded(checkedSettings)) {
+                            updateOffer = null
+                            updateMessage = "Latest ${info.channel.name.lowercase()} is already downloaded"
+                        } else if (info.isUpdateAvailable) {
                             updateOffer = info
                             updateMessage = "${info.channel.name} update found: ${info.version}"
                             showDesktopSettings = true
                         } else {
+                            updateOffer = null
                             updateMessage = "Olcbox is up to date"
                         }
                     } else {
@@ -199,7 +205,12 @@ fun main() = application {
                 "Download failed: ${error.message ?: "unknown error"}"
             }
             if (result.isSuccess) {
-                saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+                saveUpdateSettings(
+                    updateSettings.copy(
+                        lastSeenUpdateVersion = info.identity(),
+                        lastDownloadedUpdateVersion = info.identity()
+                    )
+                )
                 updateOffer = null
             }
             updateProgress = null

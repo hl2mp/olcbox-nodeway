@@ -1,3 +1,9 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
@@ -15,6 +21,34 @@ val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
 val olcrtcRepoDir = file(olcrtcRepoPath.get())
 val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
 val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
+val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
+val olcboxVersionValue = olcboxVersion.get()
+val generatedAppInfoDir = layout.buildDirectory.dir("generated/source/olcboxAppInfo/commonMain")
+
+abstract class GenerateAppInfoTask : DefaultTask() {
+    @get:Input
+    abstract val version: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val packageDir = outputDir.get().asFile.resolve("org/olcbox/app")
+        packageDir.mkdirs()
+        val escapedVersion = version.get().replace("\\", "\\\\").replace("\"", "\\\"")
+        packageDir.resolve("GeneratedAppInfo.kt").writeText(
+            """
+            package org.olcbox.app
+
+            internal object GeneratedAppInfo {
+                const val NAME: String = "olcbox"
+                const val VERSION: String = "$escapedVersion"
+            }
+            """.trimIndent() + "\n"
+        )
+    }
+}
 
 olcrtcAndroidAarFile.parentFile.mkdirs()
 
@@ -44,6 +78,11 @@ val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
 
 val olcrtcAndroidAarDependency = files(olcrtcAndroidAarFile).builtBy(buildOlcrtcAndroidAar)
 
+val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
+    version.set(olcboxVersionValue)
+    outputDir.set(generatedAppInfoDir)
+}
+
 kotlin {
     android {
         namespace = "org.olcbox.app.sharedui"
@@ -67,6 +106,10 @@ kotlin {
     iosSimulatorArm64()
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(generateAppInfo)
+        }
+
         commonMain.dependencies {
             api(libs.compose.runtime)
             api(libs.compose.ui)

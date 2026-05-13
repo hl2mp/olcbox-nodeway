@@ -7,8 +7,8 @@ data class AppInfo(
 
 object CurrentAppInfo {
     val value: AppInfo = AppInfo(
-        name = "olcbox",
-        version = "1.0.0"
+        name = GeneratedAppInfo.NAME,
+        version = GeneratedAppInfo.VERSION
     )
 
     val userAgent: String = "${value.name}/${value.version}"

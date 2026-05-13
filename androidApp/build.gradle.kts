@@ -21,6 +21,9 @@ val hasReleaseKeystore =
         listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
             .all { key -> !keystoreProperties.getProperty(key).isNullOrBlank() }
 val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
+val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
+    .map { it.toInt() }
+    .orElse(1)
 
 android {
     namespace = "org.olcbox.app"
@@ -32,7 +35,7 @@ android {
         targetSdk = 36
 
         applicationId = "org.olcbox.app"
-        versionCode = 1
+        versionCode = olcboxVersionCode.get()
         versionName = olcboxVersion.get()
 
         ndk {

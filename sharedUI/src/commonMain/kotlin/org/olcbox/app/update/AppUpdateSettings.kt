@@ -12,7 +12,9 @@ data class AppUpdateSettings(
     @SerialName("last_update_check_at_epoch_ms")
     val lastCheckAtEpochMs: Long? = null,
     @SerialName("last_seen_update_version")
-    val lastSeenUpdateVersion: String? = null
+    val lastSeenUpdateVersion: String? = null,
+    @SerialName("last_downloaded_update_version")
+    val lastDownloadedUpdateVersion: String? = null
 ) {
     fun normalized(): AppUpdateSettings {
         return copy(intervalHours = intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS))
@@ -53,13 +55,29 @@ fun AppUpdateSettings.isUpdateCheckDue(nowEpochMs: Long): Boolean {
     return nowEpochMs - lastCheck >= intervalMs
 }
 
-fun AppUpdateInfo.identity(): String = "${channel.name}:${version}:${asset.name}"
+fun AppUpdateInfo.identity(): String {
+    return listOf(
+        channel.name,
+        version,
+        publishedAt.orEmpty(),
+        asset.name,
+        asset.sizeBytes?.toString().orEmpty(),
+        asset.updatedAt.orEmpty()
+    ).joinToString("|")
+}
+
+fun AppUpdateInfo.isDownloaded(settings: AppUpdateSettings): Boolean {
+    return settings.lastDownloadedUpdateVersion == identity()
+}
 
 fun AppUpdateInfo.shouldShowOffer(settings: AppUpdateSettings): Boolean {
-    return isUpdateAvailable && settings.lastSeenUpdateVersion != identity()
+    return isUpdateAvailable &&
+            !isDownloaded(settings) &&
+            settings.lastSeenUpdateVersion != identity()
 }
 
 fun AppUpdateInfo.shouldShowOffer(settings: AppUpdateSettings, nowEpochMs: Long): Boolean {
     return isUpdateAvailable &&
+            !isDownloaded(settings) &&
             (settings.lastSeenUpdateVersion != identity() || settings.isUpdateCheckDue(nowEpochMs))
 }
