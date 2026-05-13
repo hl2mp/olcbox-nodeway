@@ -123,6 +123,39 @@ class AppUpdateServiceTest {
         assertTrue(info.copy(asset = asset.copy(name = "olcbox-android-new.apk")).shouldShowOffer(settings, 10_001L))
     }
 
+    @Test
+    fun downloadedUpdateDoesNotShowOfferAgain() {
+        val asset = AppUpdateAsset(
+            name = "olcbox-nightly-android.apk",
+            downloadUrl = "https://example/app.apk",
+            sizeBytes = 100,
+            updatedAt = "2026-05-13T10:00:00Z"
+        )
+        val info = AppUpdateInfo(
+            channel = ReleaseChannel.Nightly,
+            version = "nightly",
+            htmlUrl = "https://example/release",
+            publishedAt = "2026-05-13T10:01:00Z",
+            asset = asset,
+            isUpdateAvailable = true
+        )
+        val settings = AppUpdateSettings(
+            channel = ReleaseChannel.Nightly,
+            intervalHours = 1,
+            lastCheckAtEpochMs = 10_000L,
+            lastSeenUpdateVersion = info.identity(),
+            lastDownloadedUpdateVersion = info.identity()
+        )
+
+        assertFalse(info.shouldShowOffer(settings))
+        assertFalse(info.shouldShowOffer(settings, 10_000L + 2L * 60L * 60L * 1_000L))
+        assertTrue(
+            info.copy(
+                asset = asset.copy(updatedAt = "2026-05-13T11:00:00Z")
+            ).shouldShowOffer(settings, 10_001L)
+        )
+    }
+
     private class StaticIdentityProvider(
         private val value: String
     ) : DeviceIdentityProvider {

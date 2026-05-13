@@ -154,6 +154,7 @@ fun main() = application {
     var desktopNotice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val trayState = rememberTrayState()
+    val trayHomeState by dependencies.homeViewModel.state.collectAsState()
 
     suspend fun saveUpdateSettings(settings: AppUpdateSettings) {
         val normalized = settings.normalized()
@@ -246,6 +247,13 @@ fun main() = application {
         tooltip = "Olcbox",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })
+            Item(
+                if (trayHomeState.isVpnConnected || trayHomeState.isVpnLoading) "Stop" else "Start",
+                enabled = trayHomeState.isVpnConnected || trayHomeState.isVpnLoading || trayHomeState.canStartVpn,
+                onClick = {
+                    dependencies.homeViewModel.ToggleVpn()
+                }
+            )
             Item("Settings", onClick = {
                 isWindowVisible = true
                 showDesktopSettings = true

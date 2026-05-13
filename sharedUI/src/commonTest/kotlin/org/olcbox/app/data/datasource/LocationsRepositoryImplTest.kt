@@ -540,6 +540,77 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
+    fun refreshSingleSubscriptionPreservesOtherSubscriptions() = runTest {
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "beta",
+                locations = listOf(
+                    LocationEntry.from(
+                        "alpha",
+                        LocationConfig("Alpha", "room-alpha", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+                        subscriptionUrl = "https://example.test/alpha"
+                    ),
+                    LocationEntry.from(
+                        "beta",
+                        LocationConfig("Beta", "room-beta", "b".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+                        subscriptionUrl = "https://example.test/beta"
+                    )
+                )
+            )
+        )
+        val engine = MockEngine { request ->
+            respond("olcrtc://wbstream?vp8channel@room-alpha-new#${"c".repeat(64)}%phone${'$'}Alpha")
+        }
+
+        val updated = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).refreshSubscription("https://example.test/alpha")
+
+        val bundle = source.stored
+        assertEquals(1, updated)
+        assertNotNull(bundle)
+        assertEquals(listOf("beta", "imported_alpha"), bundle.locations.map { it.storageId })
+        assertEquals("room-beta", bundle.locations.first { it.storageId == "beta" }.location.id)
+        assertEquals("https://example.test/beta", bundle.locations.first { it.storageId == "beta" }.subscriptionUrl)
+        assertEquals("room-alpha-new", bundle.locations.first { it.subscriptionUrl == "https://example.test/alpha" }.location.id)
+        assertEquals("beta", bundle.activeLocationId)
+    }
+
+    @Test
+    fun failedSingleSubscriptionRefreshDoesNotDropExistingSubscription() = runTest {
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "alpha",
+                locations = listOf(
+                    LocationEntry.from(
+                        "alpha",
+                        LocationConfig("Alpha", "room-alpha", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+                        subscriptionUrl = "https://example.test/alpha"
+                    )
+                )
+            )
+        )
+        val engine = MockEngine {
+            respond("<html>not a config</html>")
+        }
+
+        val updated = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).refreshSubscription("https://example.test/alpha")
+
+        val bundle = source.stored
+        assertEquals(0, updated)
+        assertNotNull(bundle)
+        assertEquals(listOf("alpha"), bundle.locations.map { it.storageId })
+        assertEquals("room-alpha", bundle.locations.single().location.id)
+        assertEquals("alpha", bundle.activeLocationId)
+    }
+
+    @Test
     fun configShareRoundTripsTransportOptions() = runTest {
         val source = FakeLocationsDataSource()
         val config = LocationConfig(

@@ -19,11 +19,12 @@ internal class LinuxTunController(
         hevBinary: Path,
         socksPort: Int = PacServer.LOCAL_SOCKS_PORT
     ): Process {
-        val config = writeConfig(socksPort)
+        val upScript = writeUpScript()
+        val downScript = writeDownScript()
+        val config = writeConfig(socksPort, upScript, downScript)
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
         try {
-            waitForInterface(process)
-            runPrivilegedScript(writeUpScript())
+            waitForTunReady(process)
             routesInstalled = true
             addLog("Linux TUN connected on $TUN_NAME")
             return process
@@ -34,19 +35,27 @@ internal class LinuxTunController(
     }
 
     suspend fun stop(process: Process?) {
+        stopProcess(process)
+
         if (routesInstalled) {
-            runCatching { runPrivilegedScript(writeDownScript()) }
-                .onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
+            waitForRoutesRemoved()
+            if (routeRuleExists()) {
+                runCatching { runPrivilegedScript(writeDownScript()) }
+                    .onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
+            }
             routesInstalled = false
         }
-        stopProcess(process)
     }
 
-    private fun writeConfig(socksPort: Int): Path {
+    private fun writeConfig(socksPort: Int, upScript: Path, downScript: Path): Path {
         val config = DesktopPaths.appDataDir().resolve("linux-tun.yml")
         Files.writeString(
             config,
-            configContent(socksPort)
+            configContent(
+                socksPort = socksPort,
+                postUpScript = upScript.toString(),
+                preDownScript = downScript.toString()
+            )
         )
         return config
     }
@@ -72,14 +81,22 @@ internal class LinuxTunController(
         return script
     }
 
-    private suspend fun waitForInterface(process: Process) {
+    private suspend fun waitForTunReady(process: Process) {
         val deadline = System.currentTimeMillis() + TUN_READY_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
-            if (!process.isAlive) error("hev-socks5-tunnel exited before $TUN_NAME was ready")
-            if (interfaceExists()) return
+            if (!process.isAlive) {
+                val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+                error(
+                    buildString {
+                        append("hev-socks5-tunnel exited before $TUN_NAME was ready")
+                        if (output.isNotBlank()) append(": ").append(output)
+                    }
+                )
+            }
+            if (interfaceExists() && routeRuleExists()) return
             delay(TUN_READY_POLL_MS)
         }
-        error("$TUN_NAME was not created")
+        error("$TUN_NAME routes were not installed")
     }
 
     private suspend fun interfaceExists(): Boolean = withContext(Dispatchers.IO) {
@@ -89,6 +106,33 @@ internal class LinuxTunController(
                 .start()
             process.waitFor(1, TimeUnit.SECONDS) && process.exitValue() == 0
         }.getOrDefault(false)
+    }
+
+    private suspend fun routeRuleExists(): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val process = ProcessBuilder("ip", "rule", "show")
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(1, TimeUnit.SECONDS) &&
+                    process.exitValue() == 0 &&
+                    output.lineSequence().any { line ->
+                        val trimmed = line.trim()
+                        (
+                            trimmed.startsWith("$TUN_RULE_PREF:") ||
+                                trimmed.contains("pref $TUN_RULE_PREF")
+                            ) &&
+                            trimmed.contains("lookup $ROUTE_TABLE")
+                    }
+        }.getOrDefault(false)
+    }
+
+    private suspend fun waitForRoutesRemoved() {
+        val deadline = System.currentTimeMillis() + ROUTE_CLEANUP_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (!routeRuleExists()) return
+            delay(TUN_READY_POLL_MS)
+        }
     }
 
     private suspend fun runPrivilegedScript(script: Path) {
@@ -136,40 +180,51 @@ internal class LinuxTunController(
         const val TUN_RULE_PREF = "20"
         const val TUN_READY_TIMEOUT_MS = 10_000L
         const val TUN_READY_POLL_MS = 100L
+        const val ROUTE_CLEANUP_TIMEOUT_MS = 2_000L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
 
-        fun configContent(socksPort: Int = PacServer.LOCAL_SOCKS_PORT): String {
-            return """
-                tunnel:
-                  name: $TUN_NAME
-                  mtu: $TUN_MTU
-                  multi-queue: false
-                  ipv4: $TUN_IPV4_ADDRESS
-
-                socks5:
-                  address: ${PacServer.LOCAL_SOCKS_HOST}
-                  port: $socksPort
-                  udp: 'tcp'
-                  pipeline: false
-
-                mapdns:
-                  address: $MAPDNS_ADDRESS
-                  port: 53
-                  network: $MAPDNS_NETWORK
-                  netmask: $MAPDNS_NETMASK
-                  cache-size: 10000
-
-                misc:
-                  task-stack-size: 24576
-                  tcp-buffer-size: 4096
-                  max-session-count: 1200
-                  connect-timeout: 10000
-                  tcp-read-write-timeout: 300000
-                  udp-read-write-timeout: 60000
-                  log-file: stderr
-                  log-level: warn
-            """.trimIndent()
+        fun configContent(
+            socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
+            postUpScript: String? = null,
+            preDownScript: String? = null
+        ): String {
+            return buildString {
+                appendLine("tunnel:")
+                appendLine("  name: $TUN_NAME")
+                appendLine("  mtu: $TUN_MTU")
+                appendLine("  multi-queue: false")
+                appendLine("  ipv4: $TUN_IPV4_ADDRESS")
+                if (!postUpScript.isNullOrBlank()) {
+                    appendLine("  post-up-script: $postUpScript")
+                }
+                if (!preDownScript.isNullOrBlank()) {
+                    appendLine("  pre-down-script: $preDownScript")
+                }
+                appendLine()
+                appendLine("socks5:")
+                appendLine("  address: ${PacServer.LOCAL_SOCKS_HOST}")
+                appendLine("  port: $socksPort")
+                appendLine("  udp: 'tcp'")
+                appendLine("  pipeline: false")
+                appendLine()
+                appendLine("mapdns:")
+                appendLine("  address: $MAPDNS_ADDRESS")
+                appendLine("  port: 53")
+                appendLine("  network: $MAPDNS_NETWORK")
+                appendLine("  netmask: $MAPDNS_NETMASK")
+                appendLine("  cache-size: 10000")
+                appendLine()
+                appendLine("misc:")
+                appendLine("  task-stack-size: 24576")
+                appendLine("  tcp-buffer-size: 4096")
+                appendLine("  max-session-count: 1200")
+                appendLine("  connect-timeout: 10000")
+                appendLine("  tcp-read-write-timeout: 300000")
+                appendLine("  udp-read-write-timeout: 60000")
+                appendLine("  log-file: stderr")
+                appendLine("  log-level: warn")
+            }.trimEnd()
         }
 
         fun upScriptContent(): String {

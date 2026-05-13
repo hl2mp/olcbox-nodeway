@@ -115,6 +115,19 @@ class DesktopProxyModeTest {
     }
 
     @Test
+    fun linuxTunConfigCanRunRouteScriptsInsidePrivilegedTunnelProcess() {
+        val config = LinuxTunController.configContent(
+            socksPort = 10810,
+            postUpScript = "/tmp/olcbox-up.sh",
+            preDownScript = "/tmp/olcbox-down.sh"
+        )
+
+        assertContains(config, "port: 10810")
+        assertContains(config, "post-up-script: /tmp/olcbox-up.sh")
+        assertContains(config, "pre-down-script: /tmp/olcbox-down.sh")
+    }
+
+    @Test
     fun olcRtcCommandUsesDesktopWbStreamProviderAlias() {
         listOf(LocationConfig.PROVIDER_WB_STREAM, "wbstream").forEach { provider ->
             val command = OlcRtcCommand(

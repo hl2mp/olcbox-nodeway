@@ -177,24 +177,45 @@ class LocationsRepositoryImpl(
             .filterKeys { url -> onlyUrls == null || url in onlyUrls }
         if (groupedByUrl.isEmpty()) return 0
 
-        val nonSubscriptionLocations = bundle.locations.filter { it.subscriptionUrl.isNullOrBlank() }.toMutableList()
-        val usedStorageIds = nonSubscriptionLocations.mapTo(mutableSetOf()) { it.storageId }
+        val targetUrls = groupedByUrl.keys
+        val refreshedLocations = bundle.locations
+            .filter { entry ->
+                val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }
+                url == null || (onlyUrls != null && url !in targetUrls)
+            }
+            .toMutableList()
+        val usedStorageIds = refreshedLocations.mapTo(mutableSetOf()) { it.storageId }
         val activeBefore = bundle.activeLocationId
         var activeAfter = activeBefore
+        var successfulRefreshes = 0
+
+        fun preservePreviousEntries(entries: List<LocationEntry>) {
+            entries.forEach { entry ->
+                if (usedStorageIds.add(entry.storageId)) {
+                    refreshedLocations += entry
+                }
+            }
+        }
 
         groupedByUrl.forEach { (url, previousEntries) ->
             val previousInterval = previousEntries.subscriptionUpdateIntervalHours()
             val resolved = resolveParsedImport(
                 text = url,
                 fallbackSubscriptionInterval = previousInterval
-            ) ?: return@forEach
+            ) ?: run {
+                preservePreviousEntries(previousEntries)
+                return@forEach
+            }
             val source = resolved.source
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
             val refreshTimestamp = nowEpochMs()
             val refreshed = resolved.parsed.bundle.locations
-            if (refreshed.isEmpty()) return@forEach
+            if (refreshed.isEmpty()) {
+                preservePreviousEntries(previousEntries)
+                return@forEach
+            }
 
             val reusedBySignature = previousEntries
                 .groupBy { subscriptionSignature(it.location) }
@@ -227,18 +248,19 @@ class LocationsRepositoryImpl(
             ) {
                 activeAfter = reassigned.firstOrNull()?.storageId
             }
-            nonSubscriptionLocations += reassigned
+            refreshedLocations += reassigned
+            successfulRefreshes += 1
         }
 
-        if (groupedByUrl.isEmpty()) return 0
+        if (successfulRefreshes == 0) return 0
 
         saveBundleUnlocked(
             bundle.copy(
                 activeLocationId = activeAfter,
-                locations = nonSubscriptionLocations
+                locations = refreshedLocations
             )
         )
-        return groupedByUrl.size
+        return successfulRefreshes
     }
 
     override suspend fun refreshDueSubscriptions(): Int {
