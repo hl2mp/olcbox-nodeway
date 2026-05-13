@@ -20,6 +20,7 @@ val hasReleaseKeystore =
     keystorePropertiesFile.exists() &&
         listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
             .all { key -> !keystoreProperties.getProperty(key).isNullOrBlank() }
+val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 
 android {
     namespace = "org.olcbox.app"
@@ -32,7 +33,7 @@ android {
 
         applicationId = "org.olcbox.app"
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = olcboxVersion.get()
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

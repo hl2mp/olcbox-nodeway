@@ -1,6 +1,7 @@
 package org.olcbox.app.data.exporter
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 
 class AndroidLogExporter(private val context: Context) : LogExporter {
@@ -13,6 +14,21 @@ class AndroidLogExporter(private val context: Context) : LogExporter {
                 output.write(content.toByteArray(Charsets.UTF_8))
             } ?: error("Cannot open selected file")
             "Logs saved"
+        }
+    }
+
+    override suspend fun shareLogs(content: String): Result<String> {
+        return runCatching {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Olcbox logs")
+                putExtra(Intent.EXTRA_TEXT, content)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(intent, "Share Olcbox logs")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+            "Logs share sheet opened"
         }
     }
 }

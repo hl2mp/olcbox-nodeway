@@ -134,6 +134,7 @@ class OlcboxQsTileService : TileService() {
                     tile.subtitle = getString(R.string.qs_tile_connected)
                 }
             }
+
             is VpnStatus.Connecting, is VpnStatus.Reconnecting -> {
                 tile.state = Tile.STATE_ACTIVE
                 tile.label = getString(R.string.qs_tile_label)
@@ -142,6 +143,7 @@ class OlcboxQsTileService : TileService() {
                     tile.subtitle = getString(R.string.qs_tile_connecting)
                 }
             }
+
             else -> {
                 tile.state = Tile.STATE_INACTIVE
                 tile.label = getString(R.string.qs_tile_label)

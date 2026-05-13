@@ -17,6 +17,7 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.File
 
 private val KEY_LEGACY_SELECTED_LOCATION_ID = stringPreferencesKey("selected_hysteria_id")
+private val KEY_DEVICE_IDENTITY = stringPreferencesKey("olcbox_device_identity")
 
 class LocationsDataSourceImpl(
     private val context: Context
@@ -66,6 +67,16 @@ class LocationsDataSourceImpl(
 
     override suspend fun loadLegacyActiveLocationId(): String? {
         return context.vpnPrefDataStore.data.first()[KEY_LEGACY_SELECTED_LOCATION_ID]?.ifBlank { null }
+    }
+
+    override suspend fun loadDeviceIdentity(): String? {
+        return context.vpnPrefDataStore.data.first()[KEY_DEVICE_IDENTITY]?.ifBlank { null }
+    }
+
+    override suspend fun saveDeviceIdentity(value: String) {
+        context.vpnPrefDataStore.edit {
+            it[KEY_DEVICE_IDENTITY] = value
+        }
     }
 
     private suspend fun updateActiveLocationConfig(bundle: LocationBundleV4) {

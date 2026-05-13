@@ -245,7 +245,11 @@ data class SubscriptionMetadata(
     val color: String? = null,
     val icon: String? = null,
     val used: String? = null,
-    val available: String? = null
+    val available: String? = null,
+    @SerialName("update_interval_hours")
+    val updateIntervalHours: Int? = null,
+    @SerialName("last_refresh_at_epoch_ms")
+    val lastRefreshAtEpochMs: Long? = null
 ) {
     fun normalized(): SubscriptionMetadata {
         return copy(
@@ -255,7 +259,9 @@ data class SubscriptionMetadata(
             color = color.cleanMetadataValue(),
             icon = icon.cleanMetadataValue(),
             used = used.cleanMetadataValue(),
-            available = available.cleanMetadataValue()
+            available = available.cleanMetadataValue(),
+            updateIntervalHours = updateIntervalHours?.coerceIn(MIN_UPDATE_INTERVAL_HOURS, MAX_UPDATE_INTERVAL_HOURS),
+            lastRefreshAtEpochMs = lastRefreshAtEpochMs?.takeIf { it > 0 }
         )
     }
 
@@ -266,7 +272,15 @@ data class SubscriptionMetadata(
                 color.isNullOrBlank() &&
                 icon.isNullOrBlank() &&
                 used.isNullOrBlank() &&
-                available.isNullOrBlank()
+                available.isNullOrBlank() &&
+                updateIntervalHours == null &&
+                lastRefreshAtEpochMs == null
+    }
+
+    companion object {
+        const val DEFAULT_UPDATE_INTERVAL_HOURS = 24
+        const val MIN_UPDATE_INTERVAL_HOURS = 1
+        const val MAX_UPDATE_INTERVAL_HOURS = 720
     }
 }
 

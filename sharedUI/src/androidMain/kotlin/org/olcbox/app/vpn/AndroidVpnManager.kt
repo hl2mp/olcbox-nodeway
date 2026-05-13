@@ -227,24 +227,6 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         return OlcRtcConnectionChecker.ping(locationConfig)
     }
 
-    suspend fun pingLocations(
-        locationConfigs: List<LocationConfig>,
-        parallelism: Int = DEFAULT_LOCATION_PING_PARALLELISM
-    ): Map<LocationConfig, Long?> = coroutineScope {
-        val semaphore = Semaphore(parallelism.coerceAtLeast(1))
-
-        locationConfigs
-            .map { locationConfig ->
-                async(Dispatchers.IO) {
-                    semaphore.withPermit {
-                        locationConfig to ping(locationConfig)
-                    }
-                }
-            }
-            .awaitAll()
-            .toMap()
-    }
-
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(locationConfig)
     }

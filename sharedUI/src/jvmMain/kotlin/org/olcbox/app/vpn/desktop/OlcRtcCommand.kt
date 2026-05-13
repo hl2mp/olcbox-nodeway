@@ -8,6 +8,8 @@ internal data class OlcRtcCommand(
     val location: LocationConfig,
     val socksHost: String = PacServer.LOCAL_SOCKS_HOST,
     val socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
+    val socksUser: String = "",
+    val socksPass: String = "",
     val dataDir: Path? = null
 ) {
     fun args(): List<String> {
@@ -25,11 +27,17 @@ internal data class OlcRtcCommand(
             "-socks-host", socksHost,
             "-socks-port", socksPort.toString(),
             "-dns", "1.1.1.1:53"
-        )
+        ) + socksAuthArgs()
         val transportArgs = when (config.transport) {
             LocationConfig.TRANSPORT_VP8CHANNEL -> listOf(
                 "-vp8-fps", config.vp8Fps.toString(),
                 "-vp8-batch", config.vp8Batch.toString()
+            )
+            LocationConfig.TRANSPORT_SEICHANNEL -> listOf(
+                "-fps", "60",
+                "-batch", "64",
+                "-frag", "900",
+                "-ack-ms", "2000"
             )
             else -> emptyList()
         }
@@ -37,6 +45,14 @@ internal data class OlcRtcCommand(
             dataDir?.let { "-data" },
             dataDir?.toString()
         )
+    }
+
+    private fun socksAuthArgs(): List<String> {
+        return if (socksUser.isBlank()) {
+            emptyList()
+        } else {
+            listOf("-socks-user", socksUser, "-socks-pass", socksPass)
+        }
     }
 
     companion object {

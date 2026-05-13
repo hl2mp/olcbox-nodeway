@@ -1,9 +1,17 @@
 package org.olcbox.app.data.datasource
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
+import org.olcbox.app.CurrentAppInfo
+import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.share.ConfigShareService
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -398,6 +406,185 @@ class LocationsRepositoryImplTest {
         )
     }
 
+    @Test
+    fun olcRtcSingleProfileImportDoesNotOverwriteExistingStorageId() = runTest {
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "imported_room-01",
+                locations = listOf(
+                    LocationEntry.from(
+                        "imported_room-01",
+                        LocationConfig("Old", "room-old", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM)
+                    )
+                )
+            )
+        )
+
+        LocationsRepositoryImpl(source).importText(
+            "olcrtc://wbstream?seichannel@room-01#${"b".repeat(64)}%desktop${'$'}New"
+        )
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(listOf("imported_room-01", "imported_new"), imported.locations.map { it.storageId })
+        assertEquals("room-old", imported.locations[0].location.id)
+        assertEquals("room-01", imported.locations[1].location.id)
+        assertEquals("imported_new", imported.activeLocationId)
+    }
+
+    @Test
+    fun bundleRestoreUpdatesMatchingStorageIds() = runTest {
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "same",
+                locations = listOf(
+                    LocationEntry.from(
+                        "same",
+                        LocationConfig("Old", "room-old", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM)
+                    )
+                )
+            )
+        )
+
+        val input = """
+            {
+              "version": 4,
+              "active_location_id": "same",
+              "locations": [
+                {
+                  "storage_id": "same",
+                  "name": "Updated",
+                  "endpoint": {
+                    "room_id": "room-new",
+                    "key": "${"b".repeat(64)}",
+                    "client_id": "desktop"
+                  },
+                  "carrier": "wbstream",
+                  "transport": {"type": "datachannel"}
+                }
+              ]
+            }
+        """.trimIndent()
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(listOf("same"), imported.locations.map { it.storageId })
+        assertEquals("room-new", imported.locations.single().location.id)
+    }
+
+    @Test
+    fun subscriptionHeaderSetsIntervalAndIdentityHeaders() = runTest {
+        var userAgent: String? = null
+        var hwid: String? = null
+        val engine = MockEngine { request ->
+            userAgent = request.headers[HttpHeaders.UserAgent]
+            hwid = request.headers["x-hwid"]
+            respond(
+                content = "olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}%phone${'$'}Sub",
+                headers = headersOf("profile-update-interval", "6")
+            )
+        }
+        val source = FakeLocationsDataSource()
+
+        LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).importText("https://example.test/sub.txt")
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(CurrentAppInfo.userAgent, userAgent)
+        assertEquals("hwid-test", hwid)
+        assertEquals(6, imported.locations.single().metadata?.subscription?.updateIntervalHours)
+        assertEquals("https://example.test/sub.txt", imported.locations.single().subscriptionUrl)
+    }
+
+    @Test
+    fun subscriptionImportFallsBackWhenIdentityResponseIsNotConfig() = runTest {
+        val userAgents = mutableListOf<String?>()
+        val hwids = mutableListOf<String?>()
+        val engine = MockEngine { request ->
+            userAgents += request.headers[HttpHeaders.UserAgent]
+            hwids += request.headers["x-hwid"]
+            if (userAgents.size == 1) {
+                respond("<html>blocked</html>")
+            } else {
+                respond(
+                    content = "\uFEFFolcrtc://wbstream?vp8channel@room#${"d".repeat(64)}%phone${'$'}Fallback",
+                    headers = headersOf("profile-update-interval", "12")
+                )
+            }
+        }
+        val source = FakeLocationsDataSource()
+
+        val imported = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).importText("http://example.test/sub.txt")
+
+        val bundle = source.stored
+        assertTrue(imported)
+        assertNotNull(bundle)
+        assertEquals(2, userAgents.size)
+        assertEquals(CurrentAppInfo.userAgent, userAgents[0])
+        assertEquals("hwid-test", hwids[0])
+        assertTrue(userAgents[1]?.startsWith("Mozilla/5.0") == true)
+        assertNull(hwids[1])
+        assertEquals("room", bundle.locations.single().location.id)
+        assertEquals(12, bundle.locations.single().metadata?.subscription?.updateIntervalHours)
+        assertEquals("http://example.test/sub.txt", bundle.locations.single().subscriptionUrl)
+    }
+
+    @Test
+    fun configShareRoundTripsTransportOptions() = runTest {
+        val source = FakeLocationsDataSource()
+        val config = LocationConfig(
+            name = "Shared",
+            id = "room",
+            key = "d".repeat(64),
+            bypassProvider = LocationConfig.PROVIDER_WB_STREAM,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL,
+            vp8Fps = 48,
+            vp8Batch = 32
+        )
+
+        LocationsRepositoryImpl(source).importText(ConfigShareService.olcRtcUri(config))
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(48, imported.locations.single().location.vp8Fps)
+        assertEquals(32, imported.locations.single().location.vp8Batch)
+    }
+
+    @Test
+    fun subscriptionSharingListsDistinctUrls() {
+        val first = LocationEntry.from(
+            "first",
+            LocationConfig("First", "room-a", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+            subscriptionUrl = "https://example.test/a"
+        )
+        val second = LocationEntry.from(
+            "second",
+            LocationConfig("Second", "room-b", "b".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+            subscriptionUrl = "https://example.test/b"
+        )
+        val third = LocationEntry.from(
+            "third",
+            LocationConfig("Third", "room-c", "c".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+            subscriptionUrl = "https://example.test/a"
+        )
+
+        val items = ConfigShareService.subscriptionShareItems(listOf(first, second, third))
+
+        assertEquals(listOf("https://example.test/a", "https://example.test/b"), items.map { it.url })
+        assertEquals(2, items.first().locationCount)
+        assertEquals("https://example.test/b", ConfigShareService.subscriptionQrText(items[1].url))
+    }
+
     private class FakeLocationsDataSource(
         var stored: LocationBundleV4? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),
@@ -413,5 +600,11 @@ class LocationsRepositoryImplTest {
         override suspend fun loadLegacyLocations(): List<Pair<String, String>> = legacy
 
         override suspend fun loadLegacyActiveLocationId(): String? = legacyActive
+    }
+
+    private class StaticIdentityProvider(
+        private val value: String
+    ) : DeviceIdentityProvider {
+        override suspend fun hwid(): String = value
     }
 }

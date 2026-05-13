@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
+import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.ui.features.home.HomeScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationSettingsScreen
@@ -24,9 +25,10 @@ fun OlcboxAppContent(
     onNavigate: (AppScreen) -> Unit,
     onToggleClick: () -> Unit,
     onImportFileRequested: () -> Unit,
-    onImportFromClipboardRequested: () -> Unit,
+    onImportFromClipboardRequested: (onImported: () -> Unit, onError: (String) -> Unit) -> Unit,
     onScanQrRequested: () -> Unit = {},
     onCopyConfigRequested: () -> Unit,
+    onShareLocationRequested: (LocationConfig) -> Unit = {},
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit,
     showAppSettingsButton: Boolean,
     showSplitTunnelingButton: Boolean = false,
@@ -98,6 +100,7 @@ fun OlcboxAppContent(
                 LocationSettingsScreen(
                     viewModel = locationViewModel,
                     homeViewModel = homeViewModel,
+                    onShareLocationRequested = onShareLocationRequested,
                     onBack = {
                         homeViewModel.loadCurrentConfig()
                         onNavigate(AppScreen.Home)

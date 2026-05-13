@@ -38,7 +38,7 @@ fun HomeScreen(
     scrollState: ScrollState,
     onToggleClick: () -> Unit = { viewModel.ToggleVpn() },
     onImportFileRequested: () -> Unit = {},
-    onImportFromClipboardRequested: () -> Unit = { /* ... */ },
+    onImportFromClipboardRequested: (onImported: () -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
     onScanQrRequested: () -> Unit = {},
     onCopyConfigRequested: () -> Unit = { viewModel.onCopyFullConfigClicked() },
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
@@ -57,7 +57,8 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val pingsState = locationViewModel.pingsState
-    val hasSubscriptions = locationViewModel.locations.any { !it.subscriptionUrl.isNullOrBlank() }
+    val locations = locationViewModel.locations.toList()
+    val hasSubscriptions = locations.any { !it.subscriptionUrl.isNullOrBlank() }
 
     val requiresSetup = !state.canStartVpn && !state.isVpnConnected && !state.isVpnLoading
 
@@ -69,17 +70,18 @@ fun HomeScreen(
 
     fun refreshSubscriptions() {
         viewModel.refreshSubscriptions { updatedCount ->
-            locationViewModel.loadLocations()
-            viewModel.restartVpnIfRunning()
+            locationViewModel.loadLocations {
+                viewModel.restartVpnIfRunning()
 
-            val message = if (updatedCount > 0) {
-                "Subscriptions updated: $updatedCount"
-            } else {
-                "No subscriptions to update"
-            }
+                val message = if (updatedCount > 0) {
+                    "Subscriptions updated: $updatedCount"
+                } else {
+                    "No subscriptions to update"
+                }
 
-            scope.launch {
-                snackbarHostState.showSnackbar(message)
+                scope.launch {
+                    snackbarHostState.showSnackbar(message)
+                }
             }
         }
     }
@@ -147,7 +149,7 @@ fun HomeScreen(
                 onAddSubscriptionClick = {
                     isAddSheetOpen = true
                 },
-                locations = locationViewModel.locations,
+                locations = locations,
                 selectedLocationId = locationViewModel.selectedLocationId,
                 pingsState = pingsState,
                 onLocationSelected = { id ->
@@ -186,6 +188,20 @@ fun HomeScreen(
                         }
                     )
                 },
+                onShareClick = {
+                    viewModel.onShareLogs(
+                        onShared = { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        },
+                        onError = { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        }
+                    )
+                },
                 onDismiss = {
                     isLogsSheetOpen = false
                 }
@@ -205,10 +221,18 @@ fun HomeScreen(
                 },
                 onPasteLinkClick = {
                     isAddSheetOpen = false
-                    onImportFromClipboardRequested()
-                    scope.launch {
-                        snackbarHostState.showSnackbar("Imported from clipboard")
-                    }
+                    onImportFromClipboardRequested(
+                        {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Imported from clipboard")
+                            }
+                        },
+                        { message ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        }
+                    )
                 },
                 onImportFileClick = {
                     isAddSheetOpen = false

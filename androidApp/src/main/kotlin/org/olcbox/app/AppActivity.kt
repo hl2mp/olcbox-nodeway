@@ -12,11 +12,13 @@ import androidx.compose.runtime.getValue
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.AndroidLogExporter
+import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.AndroidConfigImporter
 import org.olcbox.app.ui.activities.AndroidMainScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.theme.AppTheme
+import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.vpn.AndroidVpnManager
 
 class AppActivity : ComponentActivity() {
@@ -40,6 +42,9 @@ class AppActivity : ComponentActivity() {
         val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
         val configImporter = AndroidConfigImporter(this)
         val logExporter = AndroidLogExporter(this)
+        val updateService = AppUpdateService(
+            deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
+        )
 
         val viewModel = HomeScreenViewModel(
             vpnManager = vpnManager,
@@ -47,7 +52,6 @@ class AppActivity : ComponentActivity() {
             configImporter = configImporter,
             logExporter = logExporter
         )
-        
         val locationViewModel = LocationViewModel(
             locationsRepository = locationsRepository
         )
@@ -60,7 +64,8 @@ class AppActivity : ComponentActivity() {
                 AndroidMainScreen(
                     viewModel = viewModel,
                     locationViewModel = locationViewModel,
-                    vpnManager = vpnManager
+                    vpnManager = vpnManager,
+                    appUpdateService = updateService
                 )
             }
         }

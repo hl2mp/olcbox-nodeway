@@ -1,15 +1,20 @@
 package org.olcbox.app.data.repository
 
+import kotlinx.coroutines.flow.StateFlow
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 
 interface LocationsRepository {
+    val changes: StateFlow<Long>
     suspend fun getBundle(): LocationBundleV4
     suspend fun saveBundle(bundle: LocationBundleV4)
     suspend fun exportBundle(): String
-    suspend fun importText(text: String)
+    suspend fun importText(text: String): Boolean
     suspend fun refreshSubscriptions(): Int
+    suspend fun refreshSubscription(subscriptionUrl: String): Int
+    suspend fun refreshDueSubscriptions(): Int
+    suspend fun setSubscriptionUpdateInterval(subscriptionUrl: String, hours: Int)
     suspend fun saveLocation(storageId: String, location: LocationConfig)
     suspend fun loadLocation(storageId: String): LocationConfig?
     suspend fun deleteLocation(storageId: String)

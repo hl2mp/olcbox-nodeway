@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MeetingRoom
@@ -36,6 +36,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -65,7 +66,9 @@ import org.olcbox.app.ui.features.home.HomeScreenViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocationSettingsTopBar(
-    onBack: () -> Unit
+    shareEnabled: Boolean,
+    onBack: () -> Unit,
+    onShare: () -> Unit
 ) {
     TopAppBar(
         title = { Text("Location settings") },
@@ -74,6 +77,21 @@ fun LocationSettingsTopBar(
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back"
+                )
+            }
+        },
+        actions = {
+            IconButton(
+                onClick = onShare,
+                enabled = shareEnabled,
+                modifier = Modifier
+                    .padding(end = 4.dp)
+                    .size(48.dp),
+                shape = CircleShape
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Share,
+                    contentDescription = "Share location"
                 )
             }
         }
@@ -85,6 +103,7 @@ fun LocationSettingsTopBar(
 fun LocationSettingsScreen(
     viewModel: LocationViewModel,
     homeViewModel: HomeScreenViewModel,
+    onShareLocationRequested: (LocationConfig) -> Unit = {},
     onBack: () -> Unit
 ) {
     val config = viewModel.editingConfig
@@ -100,7 +119,11 @@ fun LocationSettingsScreen(
 
     Scaffold(
         topBar = {
-            LocationSettingsTopBar(onBack = onBack)
+            LocationSettingsTopBar(
+                shareEnabled = viewModel.isFormValid && !isSaving,
+                onBack = onBack,
+                onShare = { onShareLocationRequested(viewModel.editingConfig) }
+            )
         },
         bottomBar = {
             if (!isKeyboardVisible) {
@@ -183,6 +206,16 @@ fun LocationSettingsScreen(
                 }
             }
 
+            if (viewModel.editingSubscriptionUrl != null) {
+                item {
+                    SubscriptionOptionsCard(
+                        intervalHours = viewModel.editingSubscriptionIntervalHours.toIntOrNull() ?: 0,
+                        enabled = !isSaving,
+                        onIntervalChanged = viewModel::onSubscriptionIntervalChanged
+                    )
+                }
+            }
+
             item {
                 SettingsTextField(
                     value = config.id,
@@ -239,6 +272,31 @@ fun LocationSettingsScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SubscriptionOptionsCard(
+    intervalHours: Int,
+    enabled: Boolean,
+    onIntervalChanged: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        SectionTitle(
+            title = "Subscription",
+            subtitle = "Auto-refresh interval"
+        )
+
+        NumericTextField(
+            value = intervalHours,
+            label = "Hours",
+            enabled = enabled,
+            onValueChange = onIntervalChanged,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

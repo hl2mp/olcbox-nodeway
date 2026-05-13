@@ -99,7 +99,7 @@ fun PingButton(
                     pingState = PingState.Loading
                     val config = configGetter()
                     val result = if (config != null) {
-                        homeViewModel.checkConnectionFor(config)
+                        homeViewModel.performPingFor(config)
                     } else {
                         homeViewModel.performPing()
                     }

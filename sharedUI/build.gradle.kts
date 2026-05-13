@@ -96,10 +96,12 @@ kotlin {
             implementation(kotlin("test"))
             implementation(libs.compose.ui.test)
             implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.ktor.client.mock)
         }
 
         androidMain.dependencies {
             implementation(libs.androidx.activityCompose)
+            implementation(libs.androidx.core)
             implementation(libs.androidx.camera.camera2)
             implementation(libs.androidx.camera.core)
             implementation(libs.androidx.camera.lifecycle)
@@ -116,6 +118,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kstore.file)
+            implementation(libs.jna)
         }
 
         iosMain.dependencies {

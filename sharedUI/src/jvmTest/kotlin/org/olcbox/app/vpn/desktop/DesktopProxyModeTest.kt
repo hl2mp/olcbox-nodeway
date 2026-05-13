@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.vpn.olcRtcNativeLibrarySpec
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -16,6 +17,20 @@ class DesktopProxyModeTest {
         assertContains(pac, "isPlainHostName(host)")
         assertContains(pac, "host == \"localhost\"")
         assertContains(pac, "SOCKS5 127.0.0.1:10808; SOCKS 127.0.0.1:10808")
+    }
+
+    @Test
+    fun pacServerUpdatesSocksTargetWhileAlreadyRunning() {
+        val server = PacServer(port = 0)
+
+        server.start("127.0.0.1", 10808)
+        server.start("127.0.0.1", 10810)
+
+        val pac = server.currentPacContent()
+        assertContains(pac, "SOCKS5 127.0.0.1:10810; SOCKS 127.0.0.1:10810")
+        assertTrue("SOCKS5 127.0.0.1:10808" !in pac)
+
+        server.stop()
     }
 
     @Test
@@ -60,6 +75,43 @@ class DesktopProxyModeTest {
         assertContains(command, LocationConfig.TRANSPORT_DATACHANNEL)
         assertTrue("-vp8-fps" !in command)
         assertEquals("/tmp/olcbox-data", command[command.indexOf("-data") + 1])
+    }
+
+    @Test
+    fun olcRtcCommandAddsSeiDefaults() {
+        val command = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = LocationConfig(
+                name = "Telemost",
+                id = "room",
+                key = "c".repeat(64),
+                bypassProvider = LocationConfig.PROVIDER_TELEMOST,
+                transport = LocationConfig.TRANSPORT_SEICHANNEL
+            )
+        ).args()
+
+        assertContains(command, LocationConfig.TRANSPORT_SEICHANNEL)
+        assertEquals("60", command[command.indexOf("-fps") + 1])
+        assertEquals("64", command[command.indexOf("-batch") + 1])
+        assertEquals("900", command[command.indexOf("-frag") + 1])
+        assertEquals("2000", command[command.indexOf("-ack-ms") + 1])
+        assertTrue("-vp8-fps" !in command)
+    }
+
+    @Test
+    fun nativeLibrarySpecSelectsPlatformFiles() {
+        assertEquals(
+            "libolcrtc-darwin-arm64.dylib",
+            olcRtcNativeLibrarySpec("Mac OS X", "aarch64")?.fileName
+        )
+        assertEquals(
+            "libolcrtc-linux-amd64.so",
+            olcRtcNativeLibrarySpec("Linux", "x86_64")?.fileName
+        )
+        assertEquals(
+            "olcrtc-windows-amd64.dll",
+            olcRtcNativeLibrarySpec("Windows 11", "amd64")?.fileName
+        )
     }
 
     @Test

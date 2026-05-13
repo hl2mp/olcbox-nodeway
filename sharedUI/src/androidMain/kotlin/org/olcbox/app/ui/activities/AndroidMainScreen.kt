@@ -10,13 +10,25 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
+import org.olcbox.app.data.share.ConfigShareService
+import org.olcbox.app.update.AndroidUpdateSettingsStore
+import org.olcbox.app.update.AppUpdateInfo
+import org.olcbox.app.update.AppUpdateSettings
+import org.olcbox.app.update.AppUpdateService
+import org.olcbox.app.update.AndroidUpdateInstaller
+import org.olcbox.app.update.identity
+import org.olcbox.app.update.isUpdateCheckDue
+import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -30,7 +42,8 @@ import org.olcbox.app.vpn.AndroidVpnManager
 fun AndroidMainScreen(
     viewModel: HomeScreenViewModel,
     locationViewModel: LocationViewModel,
-    vpnManager: AndroidVpnManager
+    vpnManager: AndroidVpnManager,
+    appUpdateService: AppUpdateService? = null
 ) {
 
     var currentScreenRoute by rememberSaveable { mutableStateOf("home") }
@@ -56,6 +69,7 @@ fun AndroidMainScreen(
     }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val connectionMode by vpnManager.connectionMode.collectAsState()
     val proxySettings by vpnManager.proxySettings.collectAsState()
     val splitTunnelSettings by vpnManager.splitTunnelSettings.collectAsState()
@@ -71,7 +85,54 @@ fun AndroidMainScreen(
     }
     var isAppSettingsOpen by remember { mutableStateOf(false) }
     var appSettingsInitialRoute by remember { mutableStateOf(AppSettingsInitialRoute.Hub) }
+    var shareSheetPayload by remember { mutableStateOf<Pair<String, String>?>(null) }
     var splitTunnelRestartPending by remember { mutableStateOf(false) }
+    val updateSettingsStore = remember(context) {
+        AndroidUpdateSettingsStore(context)
+    }
+    val updateInstaller = remember(context) {
+        AndroidUpdateInstaller(context)
+    }
+    var updateSettings by remember { mutableStateOf(AppUpdateSettings()) }
+    var updateStatusText by remember { mutableStateOf<String?>(null) }
+    var updateDownloadProgress by remember { mutableStateOf<Float?>(null) }
+    var updateOffer by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var relaunchAfterInstall by remember { mutableStateOf(false) }
+    val subscriptionShareItems = locationViewModel.locations.toList()
+        .mapNotNull { item ->
+            val url = item.subscriptionUrl
+                ?.trim()
+                ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                ?: return@mapNotNull null
+            url to item
+        }
+        .groupBy({ it.first }, { it.second })
+        .entries
+        .sortedBy { it.key }
+        .map { (url, items) ->
+            val metadata = items.firstNotNullOfOrNull { it.metadata?.subscription }
+            org.olcbox.app.data.share.SubscriptionShareItem(
+                url = url,
+                name = metadata?.name?.takeIf { it.isNotBlank() }
+                    ?: items.first().fullName,
+                updateIntervalHours = metadata?.updateIntervalHours,
+                lastRefreshAtEpochMs = metadata?.lastRefreshAtEpochMs,
+                locationCount = items.size
+            )
+        }
+
+    val updateInstallLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result: ActivityResult ->
+        if (relaunchAfterInstall && result.resultCode == Activity.RESULT_OK) {
+            relaunchAfterInstall = false
+            updateInstaller.relaunchIntent()?.let { intent ->
+                runCatching { context.startActivity(intent) }
+            }
+        } else {
+            relaunchAfterInstall = false
+        }
+    }
 
     fun markSplitTunnelChanged() {
         if (homeState.isVpnConnected && connectionMode == AndroidConnectionMode.Tun) {
@@ -84,6 +145,98 @@ fun AndroidMainScreen(
             viewModel.restartVpnIfRunning()
         }
         splitTunnelRestartPending = false
+    }
+
+    suspend fun saveUpdateSettings(settings: AppUpdateSettings) {
+        val normalized = settings.normalized()
+        updateSettings = normalized
+        updateSettingsStore.save(normalized)
+    }
+
+    fun showUpdateResult(info: AppUpdateInfo) {
+        if (info.isUpdateAvailable) {
+            updateOffer = info
+            updateStatusText = "${info.channel.name} update available: ${info.version}"
+        } else {
+            updateStatusText = "Olcbox is up to date"
+        }
+    }
+
+    fun checkUpdate(manual: Boolean) {
+        val service = appUpdateService
+        if (service == null) {
+            updateStatusText = "Update service unavailable"
+            return
+        }
+        scope.launch {
+            val previousSettings = updateSettings
+            updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
+            val result = service.check(previousSettings.channel)
+            val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            saveUpdateSettings(previousSettings.copy(lastCheckAtEpochMs = checkedAt))
+            result.fold(
+                onSuccess = { info ->
+                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
+                        showUpdateResult(info)
+                    } else if (!info.isUpdateAvailable) {
+                        updateStatusText = "Olcbox is up to date"
+                    }
+                },
+                onFailure = { error ->
+                    updateStatusText = error.message ?: "Update check failed"
+                }
+            )
+        }
+    }
+
+    fun downloadUpdate(info: AppUpdateInfo) {
+        scope.launch {
+            if (!updateInstaller.canRequestPackageInstalls()) {
+                updateInstaller.openUnknownSourcesSettings()
+                updateStatusText = "Allow Olcbox to install updates, then tap Download again"
+                Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            updateDownloadProgress = 0f
+            updateStatusText = "Downloading ${info.asset.name}..."
+            val result = updateInstaller.download(info.asset) { progress ->
+                updateDownloadProgress = progress
+            }
+            val file = result.getOrElse { error ->
+                updateStatusText = "Download failed: ${error.message ?: "unknown error"}"
+                updateDownloadProgress = null
+                Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            updateStatusText = "Installing ${info.asset.name}"
+            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+            updateOffer = null
+            updateDownloadProgress = null
+            relaunchAfterInstall = true
+            updateInstallLauncher.launch(updateInstaller.installIntent(file))
+        }
+    }
+
+    fun postponeUpdate(info: AppUpdateInfo) {
+        scope.launch {
+            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+            updateOffer = null
+        }
+    }
+
+    LaunchedEffect(appUpdateService) {
+        val loaded = updateSettingsStore.load()
+        updateSettings = loaded
+        if (appUpdateService != null && loaded.isUpdateCheckDue(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
+            checkUpdate(manual = false)
+        }
+    }
+
+    fun reloadLocationsAfterImport(onComplete: () -> Unit = {}) {
+        locationViewModel.loadLocations {
+            viewModel.loadCurrentConfig(onComplete)
+        }
     }
 
     val vpnRequestLauncher = rememberLauncherForActivityResult(
@@ -107,8 +260,7 @@ fun AndroidMainScreen(
     ) { uri: Uri? ->
         uri?.let {
             viewModel.onFileSelected(it) {
-                locationViewModel.loadLocations()
-                viewModel.loadCurrentConfig()
+                reloadLocationsAfterImport()
             }
         }
     }
@@ -125,9 +277,9 @@ fun AndroidMainScreen(
         if (rawText.isBlank()) return@rememberLauncherForActivityResult
 
         viewModel.onImportFullConfig(rawText) {
-            locationViewModel.loadLocations()
-            viewModel.loadCurrentConfig()
-            Toast.makeText(context, "QR imported", Toast.LENGTH_SHORT).show()
+            reloadLocationsAfterImport {
+                Toast.makeText(context, "QR imported", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -175,17 +327,22 @@ fun AndroidMainScreen(
         onImportFileRequested = {
             filePickerLauncher.launch("*/*")
         },
-        onImportFromClipboardRequested = {
-            viewModel.onPasteFromClipboard {
-                locationViewModel.loadLocations()
-                viewModel.loadCurrentConfig()
-            }
+        onImportFromClipboardRequested = { onImported, onError ->
+            viewModel.onPasteFromClipboard(
+                onComplete = {
+                    reloadLocationsAfterImport(onImported)
+                },
+                onError = onError
+            )
         },
         onScanQrRequested = {
             qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java))
         },
         onCopyConfigRequested = {
             viewModel.onCopyFullConfigClicked()
+        },
+        onShareLocationRequested = { config ->
+            shareSheetPayload = "Location QR" to ConfigShareService.olcRtcUri(config)
         },
         onSaveLogsRequested = { onSaved, onError ->
             pendingLogSaveCallbacks.value = onSaved to onError
@@ -206,6 +363,23 @@ fun AndroidMainScreen(
         }
     )
 
+    shareSheetPayload?.let { (title, payload) ->
+        AndroidConfigShareSheet(
+            title = title,
+            payload = payload,
+            onDismiss = { shareSheetPayload = null }
+        )
+    }
+
+    updateOffer?.let { info ->
+        AndroidUpdateOfferSheet(
+            info = info,
+            downloadProgress = updateDownloadProgress,
+            onLater = { postponeUpdate(info) },
+            onDownload = { downloadUpdate(info) }
+        )
+    }
+
     if (isAppSettingsOpen) {
         AppSettingsSheet(
             initialRoute = appSettingsInitialRoute,
@@ -215,6 +389,10 @@ fun AndroidMainScreen(
             installedApps = installedApps,
             logs = logs,
             dynamicThemeEnabled = dynamicThemeEnabled,
+            updateSettings = updateSettings,
+            updateStatusText = updateStatusText,
+            updateDownloadProgress = updateDownloadProgress,
+            subscriptions = subscriptionShareItems,
             enabled = !homeState.isVpnLoading,
             isConnectionActive = homeState.isVpnConnected,
             onDismiss = {
@@ -231,6 +409,40 @@ fun AndroidMainScreen(
                 }
                 pendingLogSaveCallbacks.value = showToast to showToast
                 logSaveLauncher.launch(viewModel.suggestedLogsFileName())
+            },
+            onShareLogsClick = {
+                val showToast: (String) -> Unit = { message ->
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+                viewModel.onShareLogs(showToast, showToast)
+            },
+            onUpdateChannelSelected = { channel ->
+                scope.launch {
+                    saveUpdateSettings(updateSettings.copy(channel = channel))
+                }
+            },
+            onUpdateIntervalSelected = { hours ->
+                scope.launch {
+                    saveUpdateSettings(updateSettings.copy(intervalHours = hours))
+                }
+            },
+            onCheckUpdatesClick = {
+                checkUpdate(manual = true)
+            },
+            onSubscriptionShareClick = { url ->
+                shareSheetPayload = "Subscription QR" to ConfigShareService.subscriptionQrText(url)
+            },
+            onSubscriptionRefreshClick = { url ->
+                viewModel.refreshSubscription(url) { updatedCount ->
+                    reloadLocationsAfterImport {
+                        viewModel.restartVpnIfRunning()
+                        Toast.makeText(
+                            context,
+                            if (updatedCount > 0) "Subscription updated" else "Subscription not updated",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
             },
             onDynamicThemeChanged = vpnManager::setDynamicThemeEnabled,
             onModeSelected = { mode ->

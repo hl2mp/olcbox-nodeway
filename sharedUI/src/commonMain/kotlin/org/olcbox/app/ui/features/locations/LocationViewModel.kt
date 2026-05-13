@@ -7,17 +7,17 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.repository.LocationsRepository
 
 data class LocationItem(
@@ -64,10 +64,16 @@ class LocationViewModel(
 
     private val activePingJobs = mutableMapOf<String, Job>()
     private val pingSemaphore = Semaphore(LOCATION_PING_PARALLELISM)
+    private var loadLocationsJob: Job? = null
+    private var loadLocationsRequest = 0
 
     var editingConfig by mutableStateOf(LocationConfig())
     var editingName by mutableStateOf("")
     var editingId by mutableStateOf<String?>(null)
+    var editingSubscriptionUrl by mutableStateOf<String?>(null)
+        private set
+    var editingSubscriptionIntervalHours by mutableStateOf(SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS.toString())
+        private set
 
     var isSaving by mutableStateOf(false)
         private set
@@ -96,41 +102,61 @@ class LocationViewModel(
 
     init {
         loadLocations()
+        viewModelScope.launch {
+            locationsRepository.changes
+                .drop(1)
+                .collect {
+                    loadLocations()
+                }
+        }
     }
 
-    fun loadLocations() {
-        viewModelScope.launch {
-            val savedConfigs = locationsRepository.getAllLocations()
-            val currentSelectedId = locationsRepository.getActiveLocationId()
+    fun loadLocations(onComplete: () -> Unit = {}) {
+        val requestId = ++loadLocationsRequest
+        loadLocationsJob?.cancel()
+        loadLocationsJob = viewModelScope.launch {
+            val bundle = locationsRepository.getBundle()
+            val savedConfigs = bundle.locations
+            val currentSelectedId = bundle.activeLocationId
 
-            locations.clear()
-
-            savedConfigs.forEach { entry ->
+            val nextLocations = savedConfigs.map { entry ->
                 val normalized = entry.location
-                locations.add(
-                    LocationItem(
-                        storageId = entry.storageId,
-                        fullName = normalized.displayName(),
-                        config = normalized,
-                        subscriptionUrl = entry.subscriptionUrl,
-                        metadata = entry.metadata
-                    )
+                LocationItem(
+                    storageId = entry.storageId,
+                    fullName = normalized.displayName(),
+                    config = normalized,
+                    subscriptionUrl = entry.subscriptionUrl,
+                    metadata = entry.metadata
                 )
             }
 
-            if (
-                locations.isNotEmpty() &&
+            if (requestId != loadLocationsRequest) return@launch
+
+            locations.clear()
+            locations.addAll(nextLocations)
+
+            val nextSelectedId = if (
+                nextLocations.isNotEmpty() &&
                 (
                         currentSelectedId.isNullOrBlank() ||
-                                locations.none { it.storageId == currentSelectedId }
+                                nextLocations.none { it.storageId == currentSelectedId }
                         )
             ) {
-                val nextId = locations.firstOrNull()?.storageId
-                locationsRepository.setActiveLocationId(nextId)
-                selectedLocationId = nextId
+                nextLocations.firstOrNull()?.storageId
             } else {
-                selectedLocationId = currentSelectedId
+                currentSelectedId
             }
+            if (
+                nextSelectedId != currentSelectedId &&
+                nextLocations.any { it.storageId == nextSelectedId }
+            ) {
+                locationsRepository.setActiveLocationId(nextSelectedId)
+            }
+
+            if (requestId != loadLocationsRequest) return@launch
+
+            selectedLocationId = nextSelectedId
+            onComplete()
         }
     }
 
@@ -149,7 +175,6 @@ class LocationViewModel(
         onError: (String) -> Unit = {}
     ) {
         val previousPings = currentPingsSnapshot()
-
         val locationsSnapshot = locations.toList()
 
         val pingableLocations = locationsSnapshot
@@ -157,7 +182,6 @@ class LocationViewModel(
                 location.config?.isComplete() == true &&
                         (targetLocationIds == null || targetLocationIds.contains(location.storageId))
             }
-            // Не запускаем второй ping для той же самой локации, если она уже проверяется
             .filterNot { location ->
                 activePingJobs.containsKey(location.storageId)
             }
@@ -171,6 +195,7 @@ class LocationViewModel(
         }
 
         if (pingableLocations.isEmpty()) {
+            emitPingState(previousPings)
             onComplete(0, 0)
             return
         }
@@ -178,9 +203,10 @@ class LocationViewModel(
         var completedForThisRequest = 0
         var onlineForThisRequest = 0
         val totalForThisRequest = pingableLocations.size
+        val jobsToStart = mutableListOf<Job>()
 
         pingableLocations.forEach { location ->
-            val job = viewModelScope.launch {
+            val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     val ping = try {
                         pingSemaphore.withPermit {
@@ -223,9 +249,49 @@ class LocationViewModel(
             }
 
             activePingJobs[location.storageId] = job
+            jobsToStart.add(job)
         }
 
         emitPingState(previousPings)
+        jobsToStart.forEach { it.start() }
+    }
+
+    private fun currentPingsSnapshot(): Map<String, Int?> {
+        return when (val state = pingsState) {
+            PingsState.Idle -> emptyMap()
+
+            is PingsState.Loading -> {
+                state.currentPings.ifEmpty {
+                    state.lastPings.orEmpty()
+                }
+            }
+
+            is PingsState.Success -> {
+                state.pings
+            }
+
+            is PingsState.Error -> {
+                state.lastPings.orEmpty()
+            }
+        }
+    }
+
+    private fun emitPingState(
+        pings: Map<String, Int?> = currentPingsSnapshot()
+    ) {
+        val pendingIds = activePingJobs.keys.toSet()
+
+        pingsState = if (pendingIds.isEmpty()) {
+            PingsState.Success(pings)
+        } else {
+            PingsState.Loading(
+                lastPings = pings,
+                currentPings = pings,
+                pendingLocationIds = pendingIds,
+                completed = 0,
+                total = pendingIds.size
+            )
+        }
     }
 
     private suspend fun checkLocationPing(
@@ -268,11 +334,18 @@ class LocationViewModel(
             editingId = null
             editingConfig = LocationConfig()
             editingName = ""
+            editingSubscriptionUrl = null
+            editingSubscriptionIntervalHours = SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS.toString()
         } else {
             val location = locations.find { it.storageId == id }
             editingId = id
             editingConfig = location?.config?.normalized() ?: LocationConfig()
             editingName = editingConfig.displayName()
+            editingSubscriptionUrl = location?.subscriptionUrl
+            editingSubscriptionIntervalHours = (
+                location?.metadata?.subscription?.updateIntervalHours
+                    ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+                ).toString()
         }
     }
 
@@ -325,6 +398,10 @@ class LocationViewModel(
         )
     }
 
+    fun onSubscriptionIntervalChanged(value: String) {
+        editingSubscriptionIntervalHours = value.filter { it.isDigit() }.take(3)
+    }
+
     private fun validateName(name: String) {
         nameError = when {
             name.isBlank() -> "Name cannot be empty"
@@ -373,6 +450,11 @@ class LocationViewModel(
             val finalConfig = editingConfig.copy(name = editingName).normalized()
 
             locationsRepository.saveLocation(id, finalConfig)
+            editingSubscriptionUrl?.let { url ->
+                val interval = editingSubscriptionIntervalHours.toIntOrNull()
+                    ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+                locationsRepository.setSubscriptionUpdateInterval(url, interval)
+            }
             locationsRepository.setActiveLocationId(id)
 
             loadLocations()
@@ -388,46 +470,7 @@ class LocationViewModel(
     fun deleteLocation(id: String, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             locationsRepository.deleteLocation(id)
-            loadLocations()
-            onComplete()
-        }
-    }
-
-    private fun currentPingsSnapshot(): Map<String, Int?> {
-        return when (val state = pingsState) {
-            PingsState.Idle -> emptyMap()
-
-            is PingsState.Loading -> {
-                state.currentPings.ifEmpty {
-                    state.lastPings.orEmpty()
-                }
-            }
-
-            is PingsState.Success -> {
-                state.pings
-            }
-
-            is PingsState.Error -> {
-                state.lastPings.orEmpty()
-            }
-        }
-    }
-
-    private fun emitPingState(
-        pings: Map<String, Int?> = currentPingsSnapshot()
-    ) {
-        val pendingIds = activePingJobs.keys.toSet()
-
-        pingsState = if (pendingIds.isEmpty()) {
-            PingsState.Success(pings)
-        } else {
-            PingsState.Loading(
-                lastPings = pings,
-                currentPings = pings,
-                pendingLocationIds = pendingIds,
-                completed = 0,
-                total = pendingIds.size
-            )
+            loadLocations(onComplete)
         }
     }
 

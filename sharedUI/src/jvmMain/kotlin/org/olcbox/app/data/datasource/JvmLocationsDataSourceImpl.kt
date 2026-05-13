@@ -30,6 +30,9 @@ class JvmLocationsDataSourceImpl(
     private val legacyBundleFile: Path
         get() = appDir.resolve(LEGACY_LOCATIONS_BUNDLE_FILE_NAME)
 
+    private val deviceIdentityFile: Path
+        get() = appDir.resolve("device_identity")
+
     override suspend fun loadLocationBundle(): LocationBundleV4? = withContext(Dispatchers.IO) {
         val file = bundleFile.takeIf { it.exists() } ?: legacyBundleFile.takeIf { it.exists() }
             ?: return@withContext null
@@ -49,4 +52,17 @@ class JvmLocationsDataSourceImpl(
     override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
 
     override suspend fun loadLegacyActiveLocationId(): String? = null
+
+    override suspend fun loadDeviceIdentity(): String? = withContext(Dispatchers.IO) {
+        deviceIdentityFile
+            .takeIf { it.exists() }
+            ?.readText()
+            ?.trim()
+            ?.ifBlank { null }
+    }
+
+    override suspend fun saveDeviceIdentity(value: String): Unit = withContext(Dispatchers.IO) {
+        Files.createDirectories(appDir)
+        deviceIdentityFile.writeText(value.trim())
+    }
 }

@@ -32,4 +32,14 @@ class JvmLocationsDataSourceImplTest {
         assertEquals("desk", loaded.activeLocationId)
         assertEquals(LocationConfig.PROVIDER_WB_STREAM, loaded.locations.first().location.bypassProvider)
     }
+
+    @Test
+    fun storesDeviceIdentityInProvidedDirectory() = runTest {
+        val dir = Files.createTempDirectory("olcbox-device-id-test")
+        val source = JvmLocationsDataSourceImpl(dir)
+
+        source.saveDeviceIdentity("install-test")
+
+        assertEquals("install-test", source.loadDeviceIdentity())
+    }
 }

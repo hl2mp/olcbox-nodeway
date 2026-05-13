@@ -1,4 +1,5 @@
 import org.gradle.internal.os.OperatingSystem
+import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -11,6 +12,8 @@ dependencies {
     implementation(project(":sharedUI"))
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.jna)
+    implementation(libs.zxing.core)
 }
 
 val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
@@ -22,7 +25,7 @@ val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativ
 val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()
 val desktopPackageName = "Olcbox"
-val desktopPackageVersion = "1.0.0"
+val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
     currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
@@ -69,6 +72,36 @@ fun registerOlcRtcBuildTask(
     }
 }
 
+fun registerOlcRtcLibraryBuildTask(
+    taskName: String,
+    goos: String,
+    goarch: String,
+    outputName: String
+) = tasks.register<Exec>(taskName) {
+    val outputFile = generatedNativeResources.map { it.file("native/$outputName") }
+
+    outputs.file(outputFile)
+    workingDir = file(olcrtcRepo.get())
+    environment("GOOS", goos)
+    environment("GOARCH", goarch)
+    environment("CGO_ENABLED", "1")
+    commandLine(
+        "go",
+        "build",
+        "-buildmode=c-shared",
+        "-trimpath",
+        "-ldflags",
+        "-s -w",
+        "-o",
+        outputFile.get().asFile.absolutePath,
+        "./cmd/olcrtc-cgo"
+    )
+
+    doFirst {
+        outputFile.get().asFile.parentFile.mkdirs()
+    }
+}
+
 val buildOlcRtcDarwinArm64 = registerOlcRtcBuildTask(
     taskName = "buildOlcRtcDarwinArm64",
     goos = "darwin",
@@ -104,6 +137,41 @@ val buildOlcRtcLinuxArm64 = registerOlcRtcBuildTask(
     outputName = "olcrtc-linux-arm64"
 )
 
+val buildOlcRtcLibDarwinArm64 = registerOlcRtcLibraryBuildTask(
+    taskName = "buildOlcRtcLibDarwinArm64",
+    goos = "darwin",
+    goarch = "arm64",
+    outputName = "libolcrtc-darwin-arm64.dylib"
+)
+
+val buildOlcRtcLibDarwinAmd64 = registerOlcRtcLibraryBuildTask(
+    taskName = "buildOlcRtcLibDarwinAmd64",
+    goos = "darwin",
+    goarch = "amd64",
+    outputName = "libolcrtc-darwin-amd64.dylib"
+)
+
+val buildOlcRtcLibLinuxAmd64 = registerOlcRtcLibraryBuildTask(
+    taskName = "buildOlcRtcLibLinuxAmd64",
+    goos = "linux",
+    goarch = "amd64",
+    outputName = "libolcrtc-linux-amd64.so"
+)
+
+val buildOlcRtcLibLinuxArm64 = registerOlcRtcLibraryBuildTask(
+    taskName = "buildOlcRtcLibLinuxArm64",
+    goos = "linux",
+    goarch = "arm64",
+    outputName = "libolcrtc-linux-arm64.so"
+)
+
+val buildOlcRtcLibWindowsAmd64 = registerOlcRtcLibraryBuildTask(
+    taskName = "buildOlcRtcLibWindowsAmd64",
+    goos = "windows",
+    goarch = "amd64",
+    outputName = "olcrtc-windows-amd64.dll"
+)
+
 val copyOlcRtcDataAssets = tasks.register<Copy>("copyOlcRtcDataAssets") {
     from(olcrtcRepo.map { file(it).resolve("data") }) {
         include("names", "surnames")
@@ -117,6 +185,11 @@ val desktopNativeAssetTasks = mutableListOf<Any>(
     buildOlcRtcWindowsAmd64,
     buildOlcRtcLinuxAmd64,
     buildOlcRtcLinuxArm64,
+    buildOlcRtcLibDarwinArm64,
+    buildOlcRtcLibDarwinAmd64,
+    buildOlcRtcLibLinuxAmd64,
+    buildOlcRtcLibLinuxArm64,
+    buildOlcRtcLibWindowsAmd64,
     copyOlcRtcDataAssets
 )
 val hostDesktopNativeAssetTasks = mutableListOf<Any>(
@@ -125,13 +198,28 @@ val hostDesktopNativeAssetTasks = mutableListOf<Any>(
 
 when {
     currentBuildOs.isMacOsX -> when (hostDesktopArch) {
-        "amd64" -> hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
-        "arm64" -> hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinArm64)
+        "amd64" -> {
+            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinAmd64)
+        }
+        "arm64" -> {
+            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinArm64)
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
+        }
     }
-    currentBuildOs.isWindows -> hostDesktopNativeAssetTasks.add(buildOlcRtcWindowsAmd64)
+    currentBuildOs.isWindows -> {
+        hostDesktopNativeAssetTasks.add(buildOlcRtcWindowsAmd64)
+        hostDesktopNativeAssetTasks.add(buildOlcRtcLibWindowsAmd64)
+    }
     currentBuildOs.isLinux -> when (hostDesktopArch) {
-        "amd64" -> hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
-        "arm64" -> hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxArm64)
+        "amd64" -> {
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxAmd64)
+        }
+        "arm64" -> {
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxArm64)
+            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxArm64)
+        }
     }
 }
 
@@ -161,6 +249,21 @@ tasks.register("buildDesktopNativeAssets") {
 sourceSets {
     main {
         resources.srcDir(generatedNativeResources)
+        resources.srcDir(layout.projectDirectory.dir("appIcons"))
+    }
+}
+
+if (currentBuildOs.isWindows) {
+    val jpackageAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
+
+    tasks.register<Zip>("packageReleasePortableZip") {
+        group = "distribution"
+        description = "Packages a portable Windows zip from the jpackage app image."
+
+        dependsOn("packageReleaseDistributionForCurrentOS")
+        from(jpackageAppDir)
+        archiveFileName.set("$desktopPackageName-$desktopPackageVersion-windows-amd64-portable.zip")
+        destinationDirectory.set(layout.buildDirectory.dir("compose/binaries/main-release/portable"))
     }
 }
 
@@ -187,6 +290,10 @@ compose.desktop {
             }
             windows {
                 iconFile.set(project.file("appIcons/WindowsIcon.ico"))
+                menuGroup = "Olcbox"
+                shortcut = true
+                dirChooser = true
+                upgradeUuid = "6f0aaf78-dbed-4745-9d95-9e63f10a30de"
             }
             macOS {
                 iconFile.set(project.file("appIcons/MacosIcon.icns"))

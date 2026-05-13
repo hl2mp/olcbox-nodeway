@@ -18,15 +18,19 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,8 +46,10 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -57,10 +63,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -93,6 +103,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.olcbox.app.CurrentAppInfo
+import org.olcbox.app.data.share.SubscriptionShareItem
+import org.olcbox.app.update.AppUpdateSettings
+import org.olcbox.app.update.ReleaseChannel
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidInstalledApp
@@ -100,6 +114,8 @@ import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelList
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.AndroidSplitTunnelSettings
+import java.text.DateFormat
+import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,11 +127,21 @@ internal fun AppSettingsSheet(
     installedApps: List<AndroidInstalledApp>,
     logs: List<String>,
     dynamicThemeEnabled: Boolean,
+    updateSettings: AppUpdateSettings,
+    updateStatusText: String?,
+    updateDownloadProgress: Float?,
+    subscriptions: List<SubscriptionShareItem>,
     enabled: Boolean,
     isConnectionActive: Boolean,
     onDismiss: () -> Unit,
     onCopyConfigClick: () -> Unit,
     onSaveLogsClick: () -> Unit,
+    onShareLogsClick: () -> Unit,
+    onUpdateChannelSelected: (ReleaseChannel) -> Unit,
+    onUpdateIntervalSelected: (Int) -> Unit,
+    onCheckUpdatesClick: () -> Unit,
+    onSubscriptionShareClick: (String) -> Unit,
+    onSubscriptionRefreshClick: (String) -> Unit,
     onDynamicThemeChanged: (Boolean) -> Unit,
     onModeSelected: (AndroidConnectionMode) -> Unit,
     onProxySettingsSaved: (String, String, Int) -> Unit,
@@ -129,12 +155,6 @@ internal fun AppSettingsSheet(
     var route by remember(initialRoute) { mutableStateOf(initialRoute.toRoute()) }
     var autoBypassPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
     var russianBypassPresetEnabled by remember { mutableStateOf(false) }
-    val isAppPickerRoute = route is AppSettingsRoute.AppList
-    val dragHandle: (@Composable () -> Unit)? = if (isAppPickerRoute) {
-        null
-    } else {
-        { BottomSheetDefaults.DragHandle() }
-    }
 
     fun closeSheet(afterClose: () -> Unit = {}) {
         scope.launch {
@@ -150,7 +170,12 @@ internal fun AppSettingsSheet(
                 closeSheet()
                 AppSettingsRoute.Hub
             }
+
             is AppSettingsRoute.AppList -> AppSettingsRoute.SplitTunneling
+            AppSettingsRoute.ConnectionMode,
+            AppSettingsRoute.SocksProxy,
+            AppSettingsRoute.SplitTunneling -> AppSettingsRoute.ConnectionSettings
+
             else -> AppSettingsRoute.Hub
         }
     }
@@ -158,8 +183,7 @@ internal fun AppSettingsSheet(
     ModalBottomSheet(
         onDismissRequest = { closeSheet() },
         sheetState = sheetState,
-        sheetGesturesEnabled = !isAppPickerRoute,
-        dragHandle = dragHandle
+        dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
         AnimatedContent(
             targetState = route,
@@ -194,22 +218,32 @@ internal fun AppSettingsSheet(
             when (currentRoute) {
                 AppSettingsRoute.Hub -> AppSettingsHubContent(
                     selectedMode = selectedMode,
-                    proxySettings = proxySettings,
-                    splitTunnelSettings = splitTunnelSettings,
                     dynamicThemeEnabled = dynamicThemeEnabled,
+                    updateSettings = updateSettings,
+                    subscriptionsCount = subscriptions.size,
                     enabled = enabled,
                     onDynamicThemeChanged = onDynamicThemeChanged,
+                    onConnectionSettingsClick = { route = AppSettingsRoute.ConnectionSettings },
+                    onSubscriptionsSharingClick = { route = AppSettingsRoute.SubscriptionsSharing },
+                    onUpdatesClick = { route = AppSettingsRoute.Updates },
+                    onApplicationLogsClick = { route = AppSettingsRoute.ApplicationLogs }
+                )
+
+                AppSettingsRoute.ConnectionSettings -> ConnectionSettingsContent(
+                    selectedMode = selectedMode,
+                    proxySettings = proxySettings,
+                    splitTunnelSettings = splitTunnelSettings,
+                    enabled = enabled,
+                    onBack = { route = AppSettingsRoute.Hub },
                     onConnectionModeClick = { route = AppSettingsRoute.ConnectionMode },
                     onProxySettingsClick = { route = AppSettingsRoute.SocksProxy },
-                    onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling },
-                    onCopyConfigClick = onCopyConfigClick,
-                    onApplicationLogsClick = { route = AppSettingsRoute.ApplicationLogs }
+                    onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling }
                 )
 
                 AppSettingsRoute.ConnectionMode -> ConnectionModeSettingsContent(
                     selectedMode = selectedMode,
                     enabled = enabled,
-                    onBack = { route = AppSettingsRoute.Hub },
+                    onBack = { route = AppSettingsRoute.ConnectionSettings },
                     onModeSelected = onModeSelected
                 )
 
@@ -217,7 +251,7 @@ internal fun AppSettingsSheet(
                     proxySettings = proxySettings,
                     enabled = enabled,
                     isConnectionActive = isConnectionActive,
-                    onBack = { route = AppSettingsRoute.Hub },
+                    onBack = { route = AppSettingsRoute.ConnectionSettings },
                     onProxySettingsSaved = onProxySettingsSaved,
                     onProxyPasswordRegenerated = onProxyPasswordRegenerated
                 )
@@ -227,7 +261,7 @@ internal fun AppSettingsSheet(
                     enabled = enabled,
                     isConnectionActive = isConnectionActive,
                     selectedMode = selectedMode,
-                    onBack = { route = AppSettingsRoute.Hub },
+                    onBack = { route = AppSettingsRoute.ConnectionSettings },
                     onModeSelected = onSplitTunnelModeSelected,
                     onAppListClick = { list -> route = AppSettingsRoute.AppList(list) }
                 )
@@ -249,7 +283,26 @@ internal fun AppSettingsSheet(
                 AppSettingsRoute.ApplicationLogs -> ApplicationLogsSettingsContent(
                     logs = logs,
                     onBack = { route = AppSettingsRoute.Hub },
-                    onSaveClick = onSaveLogsClick
+                    onSaveClick = onSaveLogsClick,
+                    onShareClick = onShareLogsClick
+                )
+
+                AppSettingsRoute.SubscriptionsSharing -> SubscriptionsSharingSettingsContent(
+                    subscriptions = subscriptions,
+                    onBack = { route = AppSettingsRoute.Hub },
+                    onCopyConfigClick = onCopyConfigClick,
+                    onShareClick = onSubscriptionShareClick,
+                    onRefreshClick = onSubscriptionRefreshClick
+                )
+
+                AppSettingsRoute.Updates -> UpdatesSettingsContent(
+                    settings = updateSettings,
+                    statusText = updateStatusText,
+                    downloadProgress = updateDownloadProgress,
+                    onBack = { route = AppSettingsRoute.Hub },
+                    onChannelSelected = onUpdateChannelSelected,
+                    onIntervalSelected = onUpdateIntervalSelected,
+                    onCheckUpdatesClick = onCheckUpdatesClick
                 )
             }
         }
@@ -264,22 +317,22 @@ internal enum class AppSettingsInitialRoute {
 @Composable
 private fun AppSettingsHubContent(
     selectedMode: AndroidConnectionMode,
-    proxySettings: AndroidSocksProxySettings,
-    splitTunnelSettings: AndroidSplitTunnelSettings,
     dynamicThemeEnabled: Boolean,
+    updateSettings: AppUpdateSettings,
+    subscriptionsCount: Int,
     enabled: Boolean,
     onDynamicThemeChanged: (Boolean) -> Unit,
-    onConnectionModeClick: () -> Unit,
-    onProxySettingsClick: () -> Unit,
-    onSplitTunnelingClick: () -> Unit,
-    onCopyConfigClick: () -> Unit,
+    onConnectionSettingsClick: () -> Unit,
+    onSubscriptionsSharingClick: () -> Unit,
+    onUpdatesClick: () -> Unit,
     onApplicationLogsClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp)
-            .padding(bottom = 32.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         SettingsSheetHeader(
             icon = Icons.Outlined.Settings,
@@ -287,21 +340,94 @@ private fun AppSettingsHubContent(
             subtitle = selectedMode.shortLabel()
         )
 
+        Spacer(Modifier.height(8.dp))
+
+        SettingsSwitchRow(
+            title = "Dynamic Theme",
+            value = if (dynamicThemeEnabled) {
+                "Using Android system colors"
+            } else {
+                "Using Olcbox colors"
+            },
+            icon = Icons.Outlined.Palette,
+            checked = dynamicThemeEnabled,
+            enabled = true,
+            onCheckedChange = onDynamicThemeChanged
+        )
+
+        SettingsNavigationRow(
+            title = "Connection Settings",
+            value = "Mode, SOCKS5 proxy, and app routing",
+            icon = selectedMode.icon(),
+            enabled = enabled,
+            onClick = onConnectionSettingsClick
+        )
+
+        SettingsNavigationRow(
+            title = "Subscriptions & Sharing",
+            value = subscriptionsCount.subscriptionSummary(),
+            icon = Icons.Outlined.Share,
+            enabled = true,
+            onClick = onSubscriptionsSharingClick
+        )
+
+        SettingsNavigationRow(
+            title = "Update Settings",
+            value = "${updateSettings.channel.label()} · every ${updateSettings.intervalHours}h",
+            icon = Icons.Outlined.Refresh,
+            enabled = true,
+            onClick = onUpdatesClick
+        )
+
+        SettingsNavigationRow(
+            title = "Application Logs",
+            value = "Diagnostics and export",
+            icon = Icons.Outlined.History,
+            enabled = true,
+            onClick = onApplicationLogsClick
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "${CurrentAppInfo.value.name} ${CurrentAppInfo.value.version}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionSettingsContent(
+    selectedMode: AndroidConnectionMode,
+    proxySettings: AndroidSocksProxySettings,
+    splitTunnelSettings: AndroidSplitTunnelSettings,
+    enabled: Boolean,
+    onBack: () -> Unit,
+    onConnectionModeClick: () -> Unit,
+    onProxySettingsClick: () -> Unit,
+    onSplitTunnelingClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(top = 16.dp, bottom = 32.dp)
+    ) {
+        SettingsDetailHeader(
+            title = "Connection Settings",
+            subtitle = selectedMode.settingsSummary(),
+            onBack = onBack
+        )
+
         Spacer(Modifier.height(20.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SettingsSwitchRow(
-                title = "Dynamic Theme",
-                value = if (dynamicThemeEnabled) {
-                    "Using Android system colors"
-                } else {
-                    "Using Olcbox colors"
-                },
-                icon = Icons.Outlined.Palette,
-                checked = dynamicThemeEnabled,
-                enabled = true,
-                onCheckedChange = onDynamicThemeChanged
-            )
             SettingsNavigationRow(
                 title = "Connection Mode",
                 value = selectedMode.settingsSummary(),
@@ -322,21 +448,6 @@ private fun AppSettingsHubContent(
                 icon = Icons.Outlined.Apps,
                 enabled = enabled,
                 onClick = onSplitTunnelingClick
-            )
-            SettingsNavigationRow(
-                title = "Copy Current Config",
-                value = "Export to clipboard",
-                icon = Icons.Outlined.ContentPaste,
-                enabled = true,
-                showChevron = false,
-                onClick = onCopyConfigClick
-            )
-            SettingsNavigationRow(
-                title = "Application Logs",
-                value = "Diagnostics and export",
-                icon = Icons.Outlined.History,
-                enabled = true,
-                onClick = onApplicationLogsClick
             )
         }
     }
@@ -787,14 +898,15 @@ private fun SplitTunnelingAppListContent(
 private fun ApplicationLogsSettingsContent(
     logs: List<String>,
     onBack: () -> Unit,
-    onSaveClick: () -> Unit
+    onSaveClick: () -> Unit,
+    onShareClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.82f)
+            .fillMaxHeight(0.8f)
             .padding(horizontal = 24.dp)
-            .padding(top = 16.dp, bottom = 12.dp)
+            .padding(top = 16.dp, bottom = 24.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SettingsDetailHeader(
@@ -810,6 +922,12 @@ private fun ApplicationLogsSettingsContent(
             ) {
                 Text("Save")
             }
+            TextButton(
+                enabled = logs.isNotEmpty(),
+                onClick = onShareClick
+            ) {
+                Text("Share")
+            }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -824,9 +942,235 @@ private fun ApplicationLogsSettingsContent(
         ) {
             LogLines(
                 logs = logs,
-                modifier = Modifier.fillMaxHeight(),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(14.dp)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UpdatesSettingsContent(
+    settings: AppUpdateSettings,
+    statusText: String?,
+    downloadProgress: Float?,
+    onBack: () -> Unit,
+    onChannelSelected: (ReleaseChannel) -> Unit,
+    onIntervalSelected: (Int) -> Unit,
+    onCheckUpdatesClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 520.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp)
+            .padding(top = 16.dp, bottom = 12.dp)
+    ) {
+        SettingsDetailHeader(
+            title = "Updates",
+            subtitle = "Current version ${CurrentAppInfo.value.version}",
+            onBack = onBack
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        SettingsSectionLabel("Release Channel")
+        Spacer(Modifier.height(8.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            ReleaseChannel.entries.forEachIndexed { index, channel ->
+                SegmentedButton(
+                    selected = settings.channel == channel,
+                    onClick = { onChannelSelected(channel) },
+                    shape = SegmentedButtonDefaults.itemShape(
+                        index = index,
+                        count = ReleaseChannel.entries.size
+                    ),
+                    label = { Text(channel.label()) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        SettingsSectionLabel("Check Interval")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AppUpdateSettings.INTERVAL_PRESETS.forEach { hours ->
+                FilterChip(
+                    selected = settings.intervalHours == hours,
+                    onClick = { onIntervalSelected(hours) },
+                    label = { Text("${hours}h") }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "Last check",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = settings.lastCheckAtEpochMs?.formatDateTime() ?: "Not checked yet",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!statusText.isNullOrBlank()) {
+                    Text(
+                        text = statusText,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (downloadProgress != null) {
+                    LinearProgressIndicator(
+                        progress = { downloadProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        Button(
+            onClick = onCheckUpdatesClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Text("Check now")
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionsSharingSettingsContent(
+    subscriptions: List<SubscriptionShareItem>,
+    onBack: () -> Unit,
+    onCopyConfigClick: () -> Unit,
+    onShareClick: (String) -> Unit,
+    onRefreshClick: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 620.dp)
+            .padding(horizontal = 24.dp)
+            .padding(top = 16.dp, bottom = 12.dp)
+    ) {
+        SettingsDetailHeader(
+            title = "Subscriptions & Sharing",
+            subtitle = subscriptions.size.subscriptionSummary(),
+            onBack = onBack
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 500.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SettingsSectionLabel("Current Config")
+
+            SettingsNavigationRow(
+                title = "Copy Full Config",
+                value = "Backup all locations to clipboard",
+                icon = Icons.Outlined.ContentPaste,
+                enabled = true,
+                showChevron = false,
+                onClick = onCopyConfigClick
+            )
+
+            SettingsSectionLabel("Subscriptions")
+
+            if (subscriptions.isEmpty()) {
+                EmptyAppsState(
+                    title = "No subscriptions",
+                    subtitle = "Imported HTTPS subscriptions will appear here."
+                )
+            } else {
+                subscriptions.forEach { item ->
+                    SubscriptionShareRow(
+                        item = item,
+                        onShareClick = { onShareClick(item.url) },
+                        onRefreshClick = { onRefreshClick(item.url) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionShareRow(
+    item: SubscriptionShareItem,
+    onShareClick: () -> Unit,
+    onRefreshClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.name,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = item.url,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Text(
+                text = item.subscriptionSummary(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onShareClick) {
+                    Text("QR/share")
+                }
+                TextButton(onClick = onRefreshClick) {
+                    Text("Refresh")
+                }
+            }
         }
     }
 }
@@ -1785,9 +2129,12 @@ private fun Drawable.toImageBitmap(sizePx: Int): ImageBitmap {
 
 private sealed class AppSettingsRoute(val depth: Int) {
     object Hub : AppSettingsRoute(0)
+    object ConnectionSettings : AppSettingsRoute(1)
     object ConnectionMode : AppSettingsRoute(1)
     object SocksProxy : AppSettingsRoute(1)
     object SplitTunneling : AppSettingsRoute(1)
+    object SubscriptionsSharing : AppSettingsRoute(1)
+    object Updates : AppSettingsRoute(1)
     object ApplicationLogs : AppSettingsRoute(1)
     data class AppList(val list: AndroidSplitTunnelList) : AppSettingsRoute(2)
 }
@@ -1804,6 +2151,35 @@ private fun AndroidConnectionMode.label(): String {
         AndroidConnectionMode.Tun -> "TUN"
         AndroidConnectionMode.Proxy -> "Proxy"
     }
+}
+
+private fun ReleaseChannel.label(): String {
+    return when (this) {
+        ReleaseChannel.Stable -> "Stable"
+        ReleaseChannel.Nightly -> "Nightly"
+    }
+}
+
+private fun Int.subscriptionSummary(): String {
+    return when (this) {
+        0 -> "No HTTPS subscriptions"
+        1 -> "1 HTTPS subscription"
+        else -> "$this HTTPS subscriptions"
+    }
+}
+
+private fun SubscriptionShareItem.subscriptionSummary(): String {
+    val interval = updateIntervalHours?.let { "every ${it}h" } ?: "default interval"
+    val count = when (locationCount) {
+        1 -> "1 location"
+        else -> "$locationCount locations"
+    }
+    val refresh = lastRefreshAtEpochMs?.let { "last refresh ${it.formatDateTime()}" } ?: "not refreshed yet"
+    return "$interval · $count · $refresh"
+}
+
+private fun Long.formatDateTime(): String {
+    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(this))
 }
 
 private fun AndroidConnectionMode.shortLabel(): String {

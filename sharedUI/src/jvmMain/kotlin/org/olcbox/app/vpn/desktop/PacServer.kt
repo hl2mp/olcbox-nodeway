@@ -5,13 +5,13 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
 
-internal class PacServer(
+class PacServer(
     private val host: String = PAC_HOST,
-    private val port: Int = PAC_PORT,
-    private val socksHost: String = LOCAL_SOCKS_HOST,
-    private val socksPort: Int = LOCAL_SOCKS_PORT
+    private val port: Int = PAC_PORT
 ) {
     private var server: HttpServer? = null
+    @Volatile
+    private var socksTarget = SocksTarget(LOCAL_SOCKS_HOST, LOCAL_SOCKS_PORT)
     private var executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "OlcboxPacServer").apply { isDaemon = true }
     }
@@ -19,21 +19,40 @@ internal class PacServer(
     val url: String
         get() = "http://$host:$port/proxy.pac"
 
-    fun start() {
+    fun start(
+        socksHost: String = LOCAL_SOCKS_HOST,
+        socksPort: Int = LOCAL_SOCKS_PORT
+    ) {
+        updateSocksTarget(socksHost, socksPort)
         if (server != null) return
         executor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "OlcboxPacServer").apply { isDaemon = true }
         }
         server = HttpServer.create(InetSocketAddress(host, port), 0).also { httpServer ->
             httpServer.createContext("/proxy.pac") { exchange ->
-                exchange.respond(generatePac(socksHost, socksPort))
+                exchange.respond(currentPacContent())
             }
             httpServer.createContext("/") { exchange ->
-                exchange.respond(generatePac(socksHost, socksPort))
+                exchange.respond(currentPacContent())
             }
             httpServer.executor = executor
             httpServer.start()
         }
+    }
+
+    fun updateSocksTarget(
+        socksHost: String = LOCAL_SOCKS_HOST,
+        socksPort: Int = LOCAL_SOCKS_PORT
+    ) {
+        socksTarget = SocksTarget(
+            host = socksHost.ifBlank { LOCAL_SOCKS_HOST },
+            port = socksPort
+        )
+    }
+
+    internal fun currentPacContent(): String {
+        val target = socksTarget
+        return generatePac(target.host, target.port)
     }
 
     fun stop() {
@@ -48,6 +67,11 @@ internal class PacServer(
         sendResponseHeaders(200, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
     }
+
+    private data class SocksTarget(
+        val host: String,
+        val port: Int
+    )
 
     companion object {
         const val PAC_HOST = "127.0.0.1"

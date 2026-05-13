@@ -4,8 +4,14 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -15,6 +21,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.olcbox.app.CurrentAppInfo
+import org.olcbox.app.data.identity.DeviceIdentityProvider
+import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
@@ -27,6 +36,8 @@ interface LocationsDataSource {
     suspend fun saveLocationBundle(bundle: LocationBundleV4)
     suspend fun loadLegacyLocations(): List<Pair<String, String>>
     suspend fun loadLegacyActiveLocationId(): String?
+    suspend fun loadDeviceIdentity(): String? = null
+    suspend fun saveDeviceIdentity(value: String) = Unit
 }
 
 private fun createLocationsHttpClient(): HttpClient {
@@ -43,11 +54,30 @@ private fun createLocationsHttpClient(): HttpClient {
 
 class LocationsRepositoryImpl(
     private val dataSource: LocationsDataSource,
-    private val httpClient: HttpClient = createLocationsHttpClient()
+    private val httpClient: HttpClient = createLocationsHttpClient(),
+    private val deviceIdentityProvider: DeviceIdentityProvider = PersistentDeviceIdentityProvider(dataSource),
+    private val nowEpochMs: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() }
 ) : LocationsRepository {
     private data class ImportSource(
         val content: String,
-        val subscriptionUrl: String? = null
+        val subscriptionUrl: String? = null,
+        val updateIntervalHours: Int? = null,
+        val requestMode: SubscriptionRequestMode = SubscriptionRequestMode.Identity
+    )
+
+    private data class DownloadedSubscription(
+        val content: String,
+        val updateIntervalHours: Int?
+    )
+
+    private data class ParsedImport(
+        val bundle: LocationBundleV4,
+        val mode: ImportMode
+    )
+
+    private data class ResolvedImport(
+        val source: ImportSource,
+        val parsed: ParsedImport
     )
 
     private data class ParsedOlcRtcUri(
@@ -55,6 +85,19 @@ class LocationsRepositoryImpl(
         val mimo: String? = null
     )
 
+    private enum class ImportMode {
+        Additive,
+        Restore
+    }
+
+    private enum class SubscriptionRequestMode {
+        Identity,
+        Compatibility
+    }
+
+    private val mutationMutex = Mutex()
+    private val _changes = MutableStateFlow(0L)
+    override val changes: StateFlow<Long> = _changes.asStateFlow()
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -65,6 +108,12 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun getBundle(): LocationBundleV4 {
+        return mutationMutex.withLock {
+            getBundleUnlocked()
+        }
+    }
+
+    private suspend fun getBundleUnlocked(): LocationBundleV4 {
         val stored = dataSource.loadLocationBundle()?.normalized()
         if (stored != null && stored.locations.isNotEmpty()) return stored
 
@@ -76,30 +125,56 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun saveBundle(bundle: LocationBundleV4) {
+        mutationMutex.withLock {
+            saveBundleUnlocked(bundle)
+        }
+    }
+
+    private suspend fun saveBundleUnlocked(bundle: LocationBundleV4) {
         dataSource.saveLocationBundle(bundle.normalized())
+        _changes.value = _changes.value + 1
     }
 
     override suspend fun exportBundle(): String {
         return json.encodeToString(LocationBundleV4.serializer(), getBundle())
     }
 
-    override suspend fun importText(text: String) {
-        val source = resolveImportSource(text.trim()) ?: return
-        val parsed = parseImport(source.content.trim(), source.subscriptionUrl) ?: return
-        val merged = mergeImportedBundle(
-            current = dataSource.loadLocationBundle(),
-            imported = parsed.normalized()
-        )
-        dataSource.saveLocationBundle(merged.normalized())
+    override suspend fun importText(text: String): Boolean {
+        val resolved = resolveParsedImport(text) ?: return false
+
+        mutationMutex.withLock {
+            val merged = mergeImportedBundle(
+                current = getBundleUnlocked(),
+                imported = resolved.parsed.bundle.normalized(),
+                replaceMatchingStorageIds = resolved.parsed.mode == ImportMode.Restore
+            )
+            saveBundleUnlocked(merged)
+        }
+        return true
     }
 
     override suspend fun refreshSubscriptions(): Int {
-        val bundle = getBundle()
+        return mutationMutex.withLock {
+            refreshSubscriptionsUnlocked(onlyUrls = null)
+        }
+    }
+
+    override suspend fun refreshSubscription(subscriptionUrl: String): Int {
+        val normalizedUrl = subscriptionUrl.trim()
+        if (normalizedUrl.isBlank()) return 0
+        return mutationMutex.withLock {
+            refreshSubscriptionsUnlocked(onlyUrls = setOf(normalizedUrl))
+        }
+    }
+
+    private suspend fun refreshSubscriptionsUnlocked(onlyUrls: Set<String>?): Int {
+        val bundle = getBundleUnlocked()
         if (bundle.locations.isEmpty()) return 0
 
         val groupedByUrl = bundle.locations
             .mapNotNull { entry -> entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }?.let { it to entry } }
             .groupBy({ it.first }, { it.second })
+            .filterKeys { url -> onlyUrls == null || url in onlyUrls }
         if (groupedByUrl.isEmpty()) return 0
 
         val nonSubscriptionLocations = bundle.locations.filter { it.subscriptionUrl.isNullOrBlank() }.toMutableList()
@@ -108,8 +183,17 @@ class LocationsRepositoryImpl(
         var activeAfter = activeBefore
 
         groupedByUrl.forEach { (url, previousEntries) ->
-            val source = resolveImportSource(url) ?: return@forEach
-            val refreshed = parseImport(source.content, url)?.locations.orEmpty()
+            val previousInterval = previousEntries.subscriptionUpdateIntervalHours()
+            val resolved = resolveParsedImport(
+                text = url,
+                fallbackSubscriptionInterval = previousInterval
+            ) ?: return@forEach
+            val source = resolved.source
+            val updateInterval = source.updateIntervalHours
+                ?: previousInterval
+                ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+            val refreshTimestamp = nowEpochMs()
+            val refreshed = resolved.parsed.bundle.locations
             if (refreshed.isEmpty()) return@forEach
 
             val reusedBySignature = previousEntries
@@ -127,7 +211,14 @@ class LocationsRepositoryImpl(
                 if (activeBefore == reusedEntry?.storageId) {
                     activeAfter = storageId
                 }
-                entry.copy(storageId = storageId, subscriptionUrl = url).normalized()
+                entry.copy(
+                    storageId = storageId,
+                    subscriptionUrl = url,
+                    metadata = entry.metadata.withSubscriptionRefreshState(
+                        updateIntervalHours = updateInterval,
+                        lastRefreshAtEpochMs = refreshTimestamp
+                    )
+                ).normalized()
             }
 
             if (activeBefore != null &&
@@ -141,83 +232,206 @@ class LocationsRepositoryImpl(
 
         if (groupedByUrl.isEmpty()) return 0
 
-        dataSource.saveLocationBundle(
+        saveBundleUnlocked(
             bundle.copy(
                 activeLocationId = activeAfter,
                 locations = nonSubscriptionLocations
-            ).normalized()
+            )
         )
         return groupedByUrl.size
     }
 
-    override suspend fun saveLocation(storageId: String, location: LocationConfig) {
-        val normalizedId = storageId.ifBlank { location.storageSlug() }
-        val bundle = getBundle()
-        val current = bundle.locations.firstOrNull { it.storageId == normalizedId }
-        val entry = LocationEntry.from(
-            storageId = normalizedId,
-            location = location,
-            subscriptionUrl = current?.subscriptionUrl,
-            metadata = current?.metadata
-        )
-        val locations = bundle.locations
-            .filterNot { it.storageId == entry.storageId } + entry
+    override suspend fun refreshDueSubscriptions(): Int {
+        return mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            val now = nowEpochMs()
+            val dueUrls = bundle.locations
+                .mapNotNull { entry ->
+                    val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val metadata = entry.metadata?.subscription
+                    val interval = metadata?.updateIntervalHours
+                        ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+                    val lastRefreshAt = metadata?.lastRefreshAtEpochMs ?: 0L
+                    val intervalMs = interval.toLong() * 60L * 60L * 1_000L
+                    url.takeIf { lastRefreshAt <= 0L || now - lastRefreshAt >= intervalMs }
+                }
+                .toSet()
 
-        dataSource.saveLocationBundle(
-            bundle.copy(
-                activeLocationId = entry.storageId,
-                locations = locations
-            ).normalized()
-        )
+            if (dueUrls.isEmpty()) {
+                0
+            } else {
+                refreshSubscriptionsUnlocked(dueUrls)
+            }
+        }
+    }
+
+    override suspend fun setSubscriptionUpdateInterval(subscriptionUrl: String, hours: Int) {
+        val normalizedUrl = subscriptionUrl.trim()
+        if (normalizedUrl.isBlank()) return
+
+        mutationMutex.withLock {
+            val interval = hours.coerceIn(
+                SubscriptionMetadata.MIN_UPDATE_INTERVAL_HOURS,
+                SubscriptionMetadata.MAX_UPDATE_INTERVAL_HOURS
+            )
+            val bundle = getBundleUnlocked()
+            val updated = bundle.locations.map { entry ->
+                if (entry.subscriptionUrl?.trim() != normalizedUrl) {
+                    entry
+                } else {
+                    entry.copy(
+                        metadata = entry.metadata.withSubscriptionInterval(interval)
+                    ).normalized()
+                }
+            }
+
+            saveBundleUnlocked(bundle.copy(locations = updated))
+        }
+    }
+
+    override suspend fun saveLocation(storageId: String, location: LocationConfig) {
+        mutationMutex.withLock {
+            val normalizedId = storageId.ifBlank { location.storageSlug() }
+            val bundle = getBundleUnlocked()
+            val current = bundle.locations.firstOrNull { it.storageId == normalizedId }
+            val entry = LocationEntry.from(
+                storageId = normalizedId,
+                location = location,
+                subscriptionUrl = current?.subscriptionUrl,
+                metadata = current?.metadata
+            )
+            val locations = bundle.locations
+                .filterNot { it.storageId == entry.storageId } + entry
+
+            saveBundleUnlocked(
+                bundle.copy(
+                    activeLocationId = entry.storageId,
+                    locations = locations
+                )
+            )
+        }
     }
 
     override suspend fun loadLocation(storageId: String): LocationConfig? {
-        return getBundle().locations.firstOrNull { it.storageId == storageId }?.location
+        return mutationMutex.withLock {
+            getBundleUnlocked().locations.firstOrNull { it.storageId == storageId }?.location
+        }
     }
 
     override suspend fun deleteLocation(storageId: String) {
-        val bundle = getBundle()
-        dataSource.saveLocationBundle(
-            bundle.copy(
-                activeLocationId = bundle.activeLocationId?.takeUnless { it == storageId },
-                locations = bundle.locations.filterNot { it.storageId == storageId }
-            ).normalized()
-        )
+        mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            saveBundleUnlocked(
+                bundle.copy(
+                    activeLocationId = bundle.activeLocationId?.takeUnless { it == storageId },
+                    locations = bundle.locations.filterNot { it.storageId == storageId }
+                )
+            )
+        }
     }
 
     override suspend fun getAllLocations(): List<LocationEntry> {
-        return getBundle().locations
+        return mutationMutex.withLock {
+            getBundleUnlocked().locations
+        }
     }
 
     override suspend fun getActiveLocationId(): String? {
-        return getBundle().activeLocationId
+        return mutationMutex.withLock {
+            getBundleUnlocked().activeLocationId
+        }
     }
 
     override suspend fun setActiveLocationId(storageId: String?) {
-        val bundle = getBundle()
-        val nextActive = storageId?.takeIf { id -> bundle.locations.any { it.storageId == id } }
-        dataSource.saveLocationBundle(bundle.copy(activeLocationId = nextActive).normalized())
+        mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            val nextActive = storageId?.takeIf { id -> bundle.locations.any { it.storageId == id } }
+            saveBundleUnlocked(bundle.copy(activeLocationId = nextActive))
+        }
     }
 
     override suspend fun getActiveLocation(): LocationEntry? {
-        val bundle = getBundle()
-        return bundle.locations.firstOrNull { it.storageId == bundle.activeLocationId }
+        return mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            bundle.locations.firstOrNull { it.storageId == bundle.activeLocationId }
+        }
     }
 
-    private suspend fun resolveImportSource(text: String): ImportSource? {
+    private suspend fun resolveParsedImport(
+        text: String,
+        fallbackSubscriptionInterval: Int? = null
+    ): ResolvedImport? {
+        val input = text.normalizedImportText()
+        if (input.isBlank()) return null
+
+        var source = resolveImportSource(input, SubscriptionRequestMode.Identity) ?: run {
+            if (input.isHttpUrl()) {
+                resolveImportSource(input, SubscriptionRequestMode.Compatibility)
+            } else {
+                null
+            }
+        } ?: return null
+
+        var parsed = parseImportSource(source, fallbackSubscriptionInterval)
+        if (parsed == null && input.isHttpUrl() && source.requestMode != SubscriptionRequestMode.Compatibility) {
+            val fallbackSource = resolveImportSource(input, SubscriptionRequestMode.Compatibility)
+            if (fallbackSource != null) {
+                source = fallbackSource
+                parsed = parseImportSource(fallbackSource, fallbackSubscriptionInterval)
+            }
+        }
+
+        return parsed?.let { ResolvedImport(source, it) }
+    }
+
+    private fun parseImportSource(
+        source: ImportSource,
+        fallbackSubscriptionInterval: Int? = null
+    ): ParsedImport? {
+        val initialSubscriptionInterval = source.updateIntervalHours
+            ?: fallbackSubscriptionInterval
+            ?: source.subscriptionUrl?.let { SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS }
+
+        return parseImport(
+            source.content.normalizedImportText(),
+            source.subscriptionUrl,
+            initialSubscriptionInterval
+        )
+    }
+
+    private suspend fun resolveImportSource(
+        text: String,
+        requestMode: SubscriptionRequestMode
+    ): ImportSource? {
         if (text.isBlank()) return null
 
         if (!text.isHttpUrl()) {
-            return ImportSource(content = text)
+            return ImportSource(content = text.normalizedImportText())
         }
 
-        return downloadTextFromUrl(text)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { ImportSource(content = it, subscriptionUrl = text.trim()) }
+        val downloaded = downloadTextFromUrl(text, requestMode) ?: return null
+        return downloaded.content
+            .normalizedImportText()
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                ImportSource(
+                    content = it,
+                    subscriptionUrl = text.trim(),
+                    updateIntervalHours = downloaded.updateIntervalHours,
+                    requestMode = requestMode
+                )
+            }
     }
 
-    private suspend fun downloadTextFromUrl(url: String): String? {
+    private suspend fun downloadTextFromUrl(
+        url: String,
+        requestMode: SubscriptionRequestMode
+    ): DownloadedSubscription? {
+        val hwid = if (requestMode == SubscriptionRequestMode.Identity) {
+            deviceIdentityProvider.hwid()
+        } else {
+            null
+        }
         val response = runCatching {
             httpClient.get(url) {
                 headers {
@@ -225,6 +439,16 @@ class LocationsRepositoryImpl(
                         HttpHeaders.Accept,
                         "text/plain, text/markdown, application/octet-stream, */*"
                     )
+                    if (requestMode == SubscriptionRequestMode.Identity) {
+                        append(HttpHeaders.UserAgent, CurrentAppInfo.userAgent)
+                        append("x-hwid", hwid.orEmpty())
+                    } else {
+                        append(
+                            HttpHeaders.UserAgent,
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                        )
+                    }
                 }
             }
         }.getOrNull() ?: return null
@@ -233,14 +457,24 @@ class LocationsRepositoryImpl(
             return null
         }
 
-        return runCatching {
+        val content = runCatching {
             response.bodyAsText()
         }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: return null
+
+        return DownloadedSubscription(
+            content = content,
+            updateIntervalHours = response.profileUpdateIntervalHours()
+        )
     }
 
     private fun String.isHttpUrl(): Boolean {
         val value = trim().lowercase()
         return value.startsWith("http://") || value.startsWith("https://")
+    }
+
+    private fun String.normalizedImportText(): String {
+        return trim().removePrefix(UTF8_BOM).trim()
     }
 
     private suspend fun migrateLegacyBundle(): LocationBundleV4 {
@@ -258,8 +492,14 @@ class LocationsRepositoryImpl(
         ).normalized()
     }
 
-    private fun parseImport(text: String, subscriptionUrl: String? = null): LocationBundleV4? {
-        parseOlcRtcText(text, subscriptionUrl)?.let { return it }
+    private fun parseImport(
+        text: String,
+        subscriptionUrl: String? = null,
+        updateIntervalHours: Int? = null
+    ): ParsedImport? {
+        parseOlcRtcText(text, subscriptionUrl, updateIntervalHours)?.let {
+            return ParsedImport(it, ImportMode.Additive)
+        }
 
         if (!text.startsWith("{") || !text.endsWith("}")) return null
 
@@ -267,40 +507,66 @@ class LocationsRepositoryImpl(
             json.parseToJsonElement(text).jsonObject
         }.getOrNull() ?: return null
 
-        parseBundle(root, subscriptionUrl)?.let { return it }
+        parseBundle(root, subscriptionUrl, updateIntervalHours)?.let {
+            return ParsedImport(it, ImportMode.Restore)
+        }
 
         return parseSingleLocation(root, null, subscriptionUrl)?.let {
-            LocationBundleV4(
-                activeLocationId = it.storageId,
-                locations = listOf(it)
+            ParsedImport(
+                LocationBundleV4(
+                    activeLocationId = it.storageId,
+                    locations = listOf(
+                        it.copy(
+                            metadata = it.metadata.withSubscriptionInterval(updateIntervalHours)
+                        ).normalized()
+                    )
+                ),
+                ImportMode.Additive
             )
         }
     }
 
     private fun mergeImportedBundle(
         current: LocationBundleV4?,
-        imported: LocationBundleV4
+        imported: LocationBundleV4,
+        replaceMatchingStorageIds: Boolean
     ): LocationBundleV4 {
         val currentBundle = current?.normalized()
         if (currentBundle == null || currentBundle.locations.isEmpty()) {
             return imported
         }
 
-        val importedByStorageId = imported.locations.associateBy { it.storageId }
+        val currentStorageIds = currentBundle.locations.mapTo(mutableSetOf()) { it.storageId }
         val existingStorageIds = currentBundle.locations.mapTo(mutableSetOf()) { it.storageId }
 
+        val importedByStorageId = if (replaceMatchingStorageIds) {
+            imported.locations.associateBy { it.storageId }
+        } else {
+            emptyMap()
+        }
+        val replacedStorageIds = importedByStorageId.keys.intersect(currentStorageIds)
+
         val mergedLocations = currentBundle.locations
-            .map { existing -> importedByStorageId[existing.storageId] ?: existing }
+            .map { existing ->
+                importedByStorageId[existing.storageId]?.also {
+                    existingStorageIds.add(it.storageId)
+                } ?: existing
+            }
             .toMutableList()
 
+        val importedIdMap = mutableMapOf<String, String>()
+
         imported.locations.forEach { entry ->
-            if (entry.storageId !in existingStorageIds) {
-                mergedLocations += entry
-            }
+            if (replaceMatchingStorageIds && entry.storageId in replacedStorageIds) return@forEach
+
+            val storageId = uniqueStorageId(entry.storageId, existingStorageIds)
+            importedIdMap[entry.storageId] = storageId
+            mergedLocations += entry.copy(storageId = storageId).normalized()
         }
 
         val importedActive = imported.activeLocationId
-            ?.takeIf { id -> imported.locations.any { it.storageId == id } }
+            ?.let { id -> importedIdMap[id] ?: id }
+            ?.takeIf { id -> mergedLocations.any { it.storageId == id } }
 
         val active = importedActive
             ?: currentBundle.activeLocationId?.takeIf { id -> mergedLocations.any { it.storageId == id } }
@@ -312,7 +578,11 @@ class LocationsRepositoryImpl(
         )
     }
 
-    private fun parseBundle(root: JsonObject, subscriptionUrl: String? = null): LocationBundleV4? {
+    private fun parseBundle(
+        root: JsonObject,
+        subscriptionUrl: String? = null,
+        updateIntervalHours: Int? = null
+    ): LocationBundleV4? {
         val locationsElement = root["locations"] ?: return null
 
         val locations = runCatching {
@@ -320,13 +590,21 @@ class LocationsRepositoryImpl(
         }.getOrNull()?.mapNotNull { element ->
             val item = element.jsonObjectOrNull() ?: return@mapNotNull null
 
-            decodeLocationEntry(item, subscriptionUrl)?.let { return@mapNotNull it }
+            decodeLocationEntry(item, subscriptionUrl)?.let {
+                return@mapNotNull it.copy(
+                    metadata = it.metadata.withSubscriptionInterval(updateIntervalHours)
+                ).normalized()
+            }
 
             val storageId = item.string("storage_id")
                 ?: item.string("storageId")
                 ?: item.string("id")?.let { "imported_${it.storageSlug()}" }
 
-            parseSingleLocation(item, storageId, subscriptionUrl)
+            parseSingleLocation(item, storageId, subscriptionUrl)?.let { entry ->
+                entry.copy(
+                    metadata = entry.metadata.withSubscriptionInterval(updateIntervalHours)
+                ).normalized()
+            }
         } ?: return null
 
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 3
@@ -446,7 +724,11 @@ class LocationsRepositoryImpl(
         return LocationEntry.from(storageId, location, subscriptionUrl = subscriptionUrl)
     }
 
-    private fun parseOlcRtcText(text: String, subscriptionUrl: String? = null): LocationBundleV4? {
+    private fun parseOlcRtcText(
+        text: String,
+        subscriptionUrl: String? = null,
+        updateIntervalHours: Int? = null
+    ): LocationBundleV4? {
         if (!text.contains(OLCRTC_URI_PREFIX)) return null
 
         val subscriptionFields = linkedMapOf<String, String>()
@@ -454,7 +736,7 @@ class LocationsRepositoryImpl(
         var localFields: MutableMap<String, String>? = null
 
         text.lineSequence()
-            .map { it.trim() }
+            .map { it.normalizedImportText() }
             .filter { it.isNotBlank() }
             .forEach { line ->
                 when {
@@ -487,6 +769,7 @@ class LocationsRepositoryImpl(
         if (locations.isEmpty()) return null
 
         val subscriptionMetadata = buildSubscriptionMetadata(subscriptionFields)
+            .withSubscriptionInterval(updateIntervalHours)
         val usedStorageIds = mutableSetOf<String>()
 
         val entries = locations.mapIndexed { index, (parsed, fields) ->
@@ -541,7 +824,8 @@ class LocationsRepositoryImpl(
         val clientEnd = mimoMarker ?: payload.length
 
         val carrier = payload.substring(0, transportMarker).trim()
-        val transport = payload.substring(transportMarker + 1, roomMarker).trim()
+        val transportToken = payload.substring(transportMarker + 1, roomMarker).trim()
+        val (transport, transportOptions) = parseTransportToken(transportToken)
         val roomId = payload.substring(roomMarker + 1, keyMarker).trim()
         val key = payload.substring(keyMarker + 1, keyEnd).trim()
 
@@ -561,7 +845,13 @@ class LocationsRepositoryImpl(
             key = key,
             clientId = clientId,
             bypassProvider = carrier,
-            transport = transport
+            transport = transport,
+            vp8Fps = transportOptions["vp8-fps"]
+                ?: transportOptions["fps"]
+                ?: LocationConfig.DEFAULT_VP8_FPS,
+            vp8Batch = transportOptions["vp8-batch"]
+                ?: transportOptions["batch"]
+                ?: LocationConfig.DEFAULT_VP8_BATCH
         ).normalized()
 
         return location
@@ -597,6 +887,28 @@ class LocationsRepositoryImpl(
             mimo = mimo,
             subscription = subscription
         ).normalized().takeUnless { it.isEmpty() }
+    }
+
+    private fun parseTransportToken(token: String): Pair<String, Map<String, Int>> {
+        val optionsStart = token.indexOf('<')
+        val optionsEnd = token.lastIndexOf('>')
+        if (optionsStart < 0 || optionsEnd <= optionsStart) {
+            return token to emptyMap()
+        }
+
+        val transport = token.substring(0, optionsStart).trim()
+        val options = token.substring(optionsStart + 1, optionsEnd)
+            .split('&')
+            .mapNotNull { part ->
+                val separator = part.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val key = part.substring(0, separator).trim().lowercase()
+                val value = part.substring(separator + 1).trim().toIntOrNull() ?: return@mapNotNull null
+                key to value
+            }
+            .toMap()
+
+        return transport to options
     }
 
     private fun parseSubscriptionField(value: String): Pair<String, String>? {
@@ -688,7 +1000,52 @@ class LocationsRepositoryImpl(
         return parts.getOrNull(index + 1)?.toIntOrNull()
     }
 
+    private fun HttpResponse.profileUpdateIntervalHours(): Int? {
+        return headers["profile-update-interval"]
+            ?.trim()
+            ?.toIntOrNull()
+            ?.coerceIn(
+                SubscriptionMetadata.MIN_UPDATE_INTERVAL_HOURS,
+                SubscriptionMetadata.MAX_UPDATE_INTERVAL_HOURS
+            )
+    }
+
+    private fun List<LocationEntry>.subscriptionUpdateIntervalHours(): Int? {
+        return firstNotNullOfOrNull { entry ->
+            entry.metadata?.subscription?.updateIntervalHours
+        }
+    }
+
+    private fun SubscriptionMetadata?.withSubscriptionInterval(hours: Int?): SubscriptionMetadata? {
+        if (hours == null) return this
+        return (this ?: SubscriptionMetadata()).copy(
+            updateIntervalHours = hours
+        ).normalized()
+    }
+
+    private fun LocationMetadata?.withSubscriptionInterval(hours: Int?): LocationMetadata? {
+        if (hours == null) return this
+        return withSubscriptionRefreshState(
+            updateIntervalHours = hours,
+            lastRefreshAtEpochMs = this?.subscription?.lastRefreshAtEpochMs
+        )
+    }
+
+    private fun LocationMetadata?.withSubscriptionRefreshState(
+        updateIntervalHours: Int,
+        lastRefreshAtEpochMs: Long?
+    ): LocationMetadata {
+        val subscription = this?.subscription ?: SubscriptionMetadata()
+        return (this ?: LocationMetadata()).copy(
+            subscription = subscription.copy(
+                updateIntervalHours = updateIntervalHours,
+                lastRefreshAtEpochMs = lastRefreshAtEpochMs
+            )
+        ).normalized()
+    }
+
     private companion object {
         const val OLCRTC_URI_PREFIX = "olcrtc://"
+        const val UTF8_BOM = "\uFEFF"
     }
 }

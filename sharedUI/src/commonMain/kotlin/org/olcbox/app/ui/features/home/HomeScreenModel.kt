@@ -6,7 +6,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.exporter.LogExporter
@@ -40,6 +42,15 @@ class HomeScreenViewModel(
 
     init {
         loadCurrentConfig()
+        startSubscriptionAutoRefresh()
+
+        viewModelScope.launch {
+            locationsRepository.changes
+                .drop(1)
+                .collect {
+                    loadCurrentConfigNow()
+                }
+        }
 
         viewModelScope.launch {
             vpnManager.status.collect { status ->
@@ -57,38 +68,43 @@ class HomeScreenViewModel(
         }
     }
 
-    fun loadCurrentConfig() {
+    fun loadCurrentConfig(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            val active = locationsRepository.getActiveLocation()
-            if (active == null) {
-                _state.update {
-                    it.copy(
-                        selectedLocation = null,
-                        configData = LocationConfig(),
-                        canStartVpn = false,
-                        startBlockedReason = "Add a location first"
-                    )
-                }
-                return@launch
-            }
+            loadCurrentConfigNow()
+            onComplete()
+        }
+    }
 
-            val normalized = active.location
-            val locationItem = LocationItem(
-                storageId = active.storageId,
-                fullName = normalized.displayName(),
-                config = normalized,
-                subscriptionUrl = active.subscriptionUrl,
-                metadata = active.metadata
-            )
-
+    private suspend fun loadCurrentConfigNow() {
+        val active = locationsRepository.getActiveLocation()
+        if (active == null) {
             _state.update {
                 it.copy(
-                    configData = normalized,
-                    selectedLocation = locationItem,
-                    canStartVpn = normalized.isComplete(),
-                    startBlockedReason = if (normalized.isComplete()) null else "Complete active location first"
+                    selectedLocation = null,
+                    configData = LocationConfig(),
+                    canStartVpn = false,
+                    startBlockedReason = "Add a location first"
                 )
             }
+            return
+        }
+
+        val normalized = active.location
+        val locationItem = LocationItem(
+            storageId = active.storageId,
+            fullName = normalized.displayName(),
+            config = normalized,
+            subscriptionUrl = active.subscriptionUrl,
+            metadata = active.metadata
+        )
+
+        _state.update {
+            it.copy(
+                configData = normalized,
+                selectedLocation = locationItem,
+                canStartVpn = normalized.isComplete(),
+                startBlockedReason = if (normalized.isComplete()) null else "Complete active location first"
+            )
         }
     }
 
@@ -194,35 +210,71 @@ class HomeScreenViewModel(
         }
     }
 
-    fun onPasteFromClipboard(onComplete: () -> Unit = {}) {
-        configImporter.getFromClipboard()?.let { text ->
-            onImportFullConfig(text, onComplete)
+    fun onShareLogs(
+        onShared: (String) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val content = buildLogsExport(logs.value)
+            logExporter.shareLogs(content)
+                .onSuccess { message -> onShared(message) }
+                .onFailure { error -> onError(error.message ?: "Failed to share logs") }
         }
     }
 
-    fun onFileSelected(fileSource: Any, onComplete: () -> Unit = {}) {
+    fun onPasteFromClipboard(
+        onComplete: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        configImporter.getFromClipboard()?.let { text ->
+            onImportFullConfig(text, onComplete, onError)
+        } ?: onError("No clipboard data found")
+    }
+
+    fun onFileSelected(
+        fileSource: Any,
+        onComplete: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
         viewModelScope.launch {
-            configImporter.readTextFromSource(fileSource)?.let { text ->
-                onImportFullConfig(text, onComplete)
+            val text = configImporter.readTextFromSource(fileSource)
+            if (text == null) {
+                onError("Could not read config file")
+            } else {
+                onImportFullConfig(text, onComplete, onError)
             }
         }
     }
-    fun onImportFullConfig(rawText: String, onComplete: () -> Unit = {}) {
-        if (rawText.isBlank()) return
+
+    fun onImportFullConfig(
+        rawText: String,
+        onComplete: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (rawText.isBlank()) {
+            onError("No config text found")
+            return
+        }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val imported = withContext(Dispatchers.IO) {
                     locationsRepository.importText(rawText)
                 }
-                loadCurrentConfig()
+                if (!imported) {
+                    onError("No valid Olcbox config found")
+                    return@launch
+                }
+                loadCurrentConfigNow()
                 onComplete()
             } catch (e: Exception) {
+                val message = e.message ?: "Import failed"
                 _state.update {
                     it.copy(
                         canStartVpn = false,
-                        startBlockedReason = e.message ?: "Import failed"
+                        startBlockedReason = message
                     )
                 }
+                onError(message)
             }
         }
     }
@@ -232,8 +284,38 @@ class HomeScreenViewModel(
     ) {
         viewModelScope.launch {
             val updatedCount = locationsRepository.refreshSubscriptions()
-            loadCurrentConfig()
+            loadCurrentConfigNow()
             onComplete(updatedCount)
+        }
+    }
+
+    fun refreshSubscription(
+        subscriptionUrl: String,
+        onComplete: (updatedCount: Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val updatedCount = locationsRepository.refreshSubscription(subscriptionUrl)
+            loadCurrentConfigNow()
+            onComplete(updatedCount)
+        }
+    }
+
+    private fun startSubscriptionAutoRefresh() {
+        viewModelScope.launch {
+            refreshDueSubscriptionsIfNeeded()
+            while (true) {
+                delay(SUBSCRIPTION_AUTO_REFRESH_POLL_MS)
+                refreshDueSubscriptionsIfNeeded()
+            }
+        }
+    }
+
+    private suspend fun refreshDueSubscriptionsIfNeeded() {
+        val updatedCount = withContext(Dispatchers.IO) {
+            locationsRepository.refreshDueSubscriptions()
+        }
+        if (updatedCount > 0) {
+            loadCurrentConfigNow()
         }
     }
 
@@ -258,3 +340,5 @@ data class HomeScreenState(
     val canStartVpn: Boolean,
     val startBlockedReason: String?
 )
+
+private const val SUBSCRIPTION_AUTO_REFRESH_POLL_MS = 60L * 60L * 1_000L

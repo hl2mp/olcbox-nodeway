@@ -15,8 +15,11 @@ internal class LinuxTunController(
 ) {
     private var routesInstalled = false
 
-    suspend fun start(hevBinary: Path): Process {
-        val config = writeConfig()
+    suspend fun start(
+        hevBinary: Path,
+        socksPort: Int = PacServer.LOCAL_SOCKS_PORT
+    ): Process {
+        val config = writeConfig(socksPort)
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
         try {
             waitForInterface(process)
@@ -39,11 +42,11 @@ internal class LinuxTunController(
         stopProcess(process)
     }
 
-    private fun writeConfig(): Path {
+    private fun writeConfig(socksPort: Int): Path {
         val config = DesktopPaths.appDataDir().resolve("linux-tun.yml")
         Files.writeString(
             config,
-            configContent()
+            configContent(socksPort)
         )
         return config
     }
@@ -136,7 +139,7 @@ internal class LinuxTunController(
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
 
-        fun configContent(): String {
+        fun configContent(socksPort: Int = PacServer.LOCAL_SOCKS_PORT): String {
             return """
                 tunnel:
                   name: $TUN_NAME
@@ -146,7 +149,7 @@ internal class LinuxTunController(
 
                 socks5:
                   address: ${PacServer.LOCAL_SOCKS_HOST}
-                  port: ${PacServer.LOCAL_SOCKS_PORT}
+                  port: $socksPort
                   udp: 'tcp'
                   pipeline: false
 

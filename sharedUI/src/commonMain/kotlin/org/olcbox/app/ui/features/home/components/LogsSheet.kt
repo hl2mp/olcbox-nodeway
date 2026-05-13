@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 fun LogsSheet(
     logs: List<String>,
     onSaveClick: () -> Unit,
+    onShareClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(
@@ -65,6 +66,7 @@ fun LogsSheet(
             logs = logs,
             modifier = Modifier.fillMaxHeight(0.8f),
             onSaveClick = onSaveClick,
+            onShareClick = onShareClick,
             onCloseClick = { closeSheet() }
         )
     }
@@ -75,6 +77,7 @@ fun LogsContent(
     logs: List<String>,
     modifier: Modifier = Modifier,
     onSaveClick: () -> Unit,
+    onShareClick: () -> Unit,
     onCloseClick: () -> Unit
 ) {
     Column(
@@ -101,6 +104,12 @@ fun LogsContent(
                     onClick = onSaveClick
                 ) {
                     Text("Save")
+                }
+                TextButton(
+                    enabled = logs.isNotEmpty(),
+                    onClick = onShareClick
+                ) {
+                    Text("Share")
                 }
 
                 IconButton(onClick = onCloseClick) {
