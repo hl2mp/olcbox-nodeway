@@ -59,7 +59,19 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           $exe = Get-ChildItem "desktopApp/build/compose/binaries/main-release/exe/*.exe" | Select-Object -First 1
           $msi = Get-ChildItem "desktopApp/build/compose/binaries/main-release/msi/*.msi" | Select-Object -First 1
-          $zip = Get-ChildItem "desktopApp/build/compose/binaries/main-release/portable/*.zip" | Select-Object -First 1
+          $zip = Get-ChildItem "desktopApp/build/compose/binaries/main-release/portable/*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $zip) {
+            $portableDir = "desktopApp/build/compose/binaries/main-release/portable"
+            $appRoot = "desktopApp/build/compose/binaries/main-release/app"
+            $appImage = Get-ChildItem $appRoot -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $appImage) {
+              throw "Portable app image not found under $appRoot"
+            }
+            New-Item -ItemType Directory -Force $portableDir | Out-Null
+            $portableZip = Join-Path $portableDir "Olcbox-windows-amd64-portable.zip"
+            Compress-Archive -Path $appImage.FullName -DestinationPath $portableZip -Force
+            $zip = Get-Item $portableZip
+          }
           Copy-Item $exe.FullName "dist/Olcbox-windows-amd64.exe"
           Copy-Item $msi.FullName "dist/Olcbox-windows-amd64.msi"
           Copy-Item $zip.FullName "dist/Olcbox-windows-amd64-portable.zip"

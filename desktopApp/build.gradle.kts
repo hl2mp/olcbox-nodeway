@@ -254,16 +254,24 @@ sourceSets {
 }
 
 if (currentBuildOs.isWindows) {
-    val jpackageAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
+    val jpackageAppRootDir = layout.buildDirectory.dir("compose/binaries/main-release/app")
 
     tasks.register<Zip>("packageReleasePortableZip") {
         group = "distribution"
         description = "Packages a portable Windows zip from the jpackage app image."
 
-        dependsOn("packageReleaseDistributionForCurrentOS")
-        from(jpackageAppDir)
+        dependsOn("createReleaseDistributable")
+        from(jpackageAppRootDir)
         archiveFileName.set("$desktopPackageName-$desktopPackageVersion-windows-amd64-portable.zip")
         destinationDirectory.set(layout.buildDirectory.dir("compose/binaries/main-release/portable"))
+
+        doFirst {
+            val appRoot = jpackageAppRootDir.get().asFile
+            val appEntries = appRoot.listFiles().orEmpty()
+            require(appRoot.isDirectory && appEntries.isNotEmpty()) {
+                "Windows portable app image was not created at ${appRoot.absolutePath}"
+            }
+        }
     }
 }
 
