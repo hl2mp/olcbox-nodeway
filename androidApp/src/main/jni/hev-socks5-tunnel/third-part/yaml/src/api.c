@@ -97,7 +97,7 @@ yaml_string_join(
         yaml_char_t **b_start, yaml_char_t **b_pointer, SHIM(yaml_char_t **b_end))
 {
     UNUSED_PARAM(b_end)
-    if (*b_start == *b_pointer)
+    if (*b_pointer <= *b_start)
         return 1;
 
     while (*a_end - *a_pointer <= *b_pointer - *b_start) {
