@@ -19,12 +19,12 @@ jobs:
 
     steps:
       - name: Checkout olcbox
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: olcbox
 
       - name: Checkout olcrtc
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: openlibrecommunity/olcrtc
           ref: master
@@ -32,20 +32,20 @@ jobs:
           submodules: recursive
 
       - name: Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Run checks
         working-directory: olcbox
