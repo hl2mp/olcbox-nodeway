@@ -402,7 +402,7 @@ jobs:
             echo "- Source branch: \`${GITHUB_REF_NAME}\`"
             echo "- App version: \`${OLCBOX_VERSION}\`"
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
-            echo "- Workflow: \`.github/workflows/windows-exe.yml\`"
+            echo "- Workflow: \`.github/workflows/release.yml\`"
             echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo
             echo "### SHA256"
