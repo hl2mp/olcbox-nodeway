@@ -206,16 +206,6 @@ fun LocationSettingsScreen(
                 }
             }
 
-            if (viewModel.editingSubscriptionUrl != null) {
-                item {
-                    SubscriptionOptionsCard(
-                        intervalHours = viewModel.editingSubscriptionIntervalHours.toIntOrNull() ?: 0,
-                        enabled = !isSaving,
-                        onIntervalChanged = viewModel::onSubscriptionIntervalChanged
-                    )
-                }
-            }
-
             item {
                 SettingsTextField(
                     value = config.id,
@@ -272,31 +262,6 @@ fun LocationSettingsScreen(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun SubscriptionOptionsCard(
-    intervalHours: Int,
-    enabled: Boolean,
-    onIntervalChanged: (String) -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        SectionTitle(
-            title = "Subscription",
-            subtitle = "Auto-refresh interval"
-        )
-
-        NumericTextField(
-            value = intervalHours,
-            label = "Hours",
-            enabled = enabled,
-            onValueChange = onIntervalChanged,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 
