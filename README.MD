@@ -15,6 +15,10 @@ Not intended for production use.
 ## Support
 Support options are not publicly listed. Contact the author if needed.
 
+> **Автор ничего не продаёт.  
+> Не продаются приложение, доступ, конфигурации, подписки или услуги поддержки.  
+> Возможен только добровольный донат.**
+
 ## Legal Notice
 This software is intended for development, testing and research purposes only.
 
