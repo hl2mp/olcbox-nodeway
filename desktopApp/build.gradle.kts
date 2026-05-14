@@ -17,7 +17,7 @@ dependencies {
 }
 
 val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
-    .resolve("olcrtc-original")
+    .resolve("olcrtc")
     .absolutePath
 val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
     .orElse(defaultOlcRtcRepo)

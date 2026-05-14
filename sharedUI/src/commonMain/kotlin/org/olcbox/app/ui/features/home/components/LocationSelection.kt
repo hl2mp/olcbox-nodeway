@@ -213,7 +213,7 @@ private fun RelaySetupCard(
 
         SetupActionRow(
             title = "Create custom location",
-            subtitle = "Enter room, key, carrier, and transport",
+            subtitle = "Enter room, key, provider, and transport",
             icon = Icons.Outlined.Add,
             onClick = onAddLocationClick
         )

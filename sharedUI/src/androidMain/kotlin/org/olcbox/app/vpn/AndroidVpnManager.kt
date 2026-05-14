@@ -22,6 +22,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.datasource.LocationsDataSourceImpl
+import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_DYNAMIC_THEME
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
@@ -44,6 +46,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     private val _splitTunnelSettings = MutableStateFlow(AndroidSplitTunnelSettings())
     private val _dynamicThemeEnabled = MutableStateFlow(true)
     private val _installedApps = MutableStateFlow<List<AndroidInstalledApp>>(emptyList())
+    private val deviceIdentityProvider = PersistentDeviceIdentityProvider(
+        LocationsDataSourceImpl(appContext)
+    )
 
     override val logs: StateFlow<List<String>> = OlcboxVpnState.logs
     override val status: StateFlow<VpnStatus> = OlcboxVpnState.status
@@ -224,11 +229,17 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.ping(locationConfig)
+        return OlcRtcConnectionChecker.ping(
+            locationConfig = locationConfig,
+            deviceId = deviceIdentityProvider.hwid()
+        )
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.check(locationConfig)
+        return OlcRtcConnectionChecker.check(
+            locationConfig = locationConfig,
+            deviceId = deviceIdentityProvider.hwid()
+        )
     }
 
     private suspend fun ensureProxySettings() {

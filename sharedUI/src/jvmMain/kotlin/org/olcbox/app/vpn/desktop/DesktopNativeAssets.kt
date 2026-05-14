@@ -136,7 +136,7 @@ internal object DesktopNativeAssets {
     private fun olcRtcSourceCandidates(fileName: String): List<Path> {
         val explicitBinary = System.getenv("OLCRTC_BINARY")?.takeIf { it.isNotBlank() }?.let { Path(it) }
         val explicitRepo = System.getenv("OLCRTC_REPO")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        val defaultRepo = Path("..").resolve("olcrtc-original")
+        val defaultRepo = Path("..").resolve("olcrtc")
         return listOfNotNull(
             explicitBinary,
             explicitRepo
@@ -151,7 +151,7 @@ internal object DesktopNativeAssets {
 
     private fun olcRtcDataSourceCandidates(fileName: String): List<Path> {
         val explicitRepo = System.getenv("OLCRTC_REPO")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        val defaultRepo = Path("..").resolve("olcrtc-original")
+        val defaultRepo = Path("..").resolve("olcrtc")
         return listOfNotNull(explicitRepo, defaultRepo).map { repo ->
             repo.resolve("data").resolve(fileName)
         }

@@ -379,6 +379,10 @@ class LocationsRepositoryImpl(
         }
     }
 
+    override suspend fun getDeviceIdentity(): String {
+        return deviceIdentityProvider.hwid()
+    }
+
     private suspend fun resolveParsedImport(
         text: String,
         fallbackSubscriptionInterval: Int? = null
@@ -667,10 +671,14 @@ class LocationsRepositoryImpl(
             ?: root
 
         val provider = firstNotBlank(
+            source.string("auth_provider"),
+            source.string("authProvider"),
             source.string("bypass_provider"),
             source.string("bypassProvider"),
             source.string("provider"),
             root["turn"]?.jsonObjectOrNull()?.string("type"),
+            root.string("auth_provider"),
+            root.string("authProvider"),
             root.string("bypass_provider"),
             root.string("bypassProvider"),
             root.string("provider")
@@ -714,13 +722,6 @@ class LocationsRepositoryImpl(
                 source.string("encryption_key"),
                 source.string("password"),
                 root.string("key")
-            ),
-            clientId = firstNotBlank(
-                source.string("client_id"),
-                source.string("clientId"),
-                root.string("client_id"),
-                root.string("clientId"),
-                LocationConfig.DEFAULT_CLIENT_ID
             ),
             bypassProvider = provider,
             transport = firstNotBlank(
@@ -843,18 +844,12 @@ class LocationsRepositoryImpl(
             .takeIf { it >= 0 }
 
         val keyEnd = listOfNotNull(clientMarker, mimoMarker).minOrNull() ?: payload.length
-        val clientEnd = mimoMarker ?: payload.length
 
-        val carrier = payload.substring(0, transportMarker).trim()
+        val provider = payload.substring(0, transportMarker).trim()
         val transportToken = payload.substring(transportMarker + 1, roomMarker).trim()
         val (transport, transportOptions) = parseTransportToken(transportToken)
         val roomId = payload.substring(roomMarker + 1, keyMarker).trim()
         val key = payload.substring(keyMarker + 1, keyEnd).trim()
-
-        val clientId = clientMarker
-            ?.let { payload.substring(it + 1, clientEnd).trim() }
-            .orEmpty()
-            .ifBlank { LocationConfig.DEFAULT_CLIENT_ID }
 
         val mimo = mimoMarker
             ?.let { payload.substring(it + 1) }
@@ -865,8 +860,7 @@ class LocationsRepositoryImpl(
             name = mimo.ifBlank { roomId },
             id = roomId,
             key = key,
-            clientId = clientId,
-            bypassProvider = carrier,
+            bypassProvider = provider,
             transport = transport,
             vp8Fps = transportOptions["vp8-fps"]
                 ?: transportOptions["fps"]
@@ -977,7 +971,7 @@ class LocationsRepositoryImpl(
             normalized.bypassProvider,
             normalized.transport,
             normalized.id,
-            normalized.clientId
+            normalized.key
         ).joinToString("|")
     }
 

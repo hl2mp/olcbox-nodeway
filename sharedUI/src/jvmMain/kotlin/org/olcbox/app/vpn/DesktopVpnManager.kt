@@ -29,6 +29,8 @@ import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
@@ -64,6 +66,7 @@ class DesktopVpnManager private constructor(
     private var tunLogJob: Job? = null
     private var process: Process? = null
     private var tunProcess: Process? = null
+    private var olcRtcConfigPath: Path? = null
     private var generation = 0L
     private val linuxTunController = LinuxTunController(::addLog)
 
@@ -104,11 +107,17 @@ class DesktopVpnManager private constructor(
     }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.ping(locationConfig)
+        return OlcRtcConnectionChecker.ping(
+            locationConfig = locationConfig,
+            deviceId = locationsRepository.getDeviceIdentity()
+        )
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.check(locationConfig)
+        return OlcRtcConnectionChecker.check(
+            locationConfig = locationConfig,
+            deviceId = locationsRepository.getDeviceIdentity()
+        )
     }
 
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
@@ -222,6 +231,7 @@ class DesktopVpnManager private constructor(
             pacServer.stop()
             stopProcess(process)
             process = null
+            deleteOlcRtcConfig()
 
             if (e !is CancellationException && requestGeneration == generation) {
                 setStatus(VpnStatus.Error(e.message ?: "Desktop start failed"))
@@ -288,6 +298,7 @@ class DesktopVpnManager private constructor(
 
         stopProcess(process)
         process = null
+        deleteOlcRtcConfig()
 
         logJob?.cancel()
         logJob = null
@@ -312,7 +323,7 @@ class DesktopVpnManager private constructor(
         val config = location.normalized()
         val provider = OlcRtcCommand.desktopProviderArg(config.bypassProvider)
         val dataDir = DesktopNativeAssets.resolveOlcRtcDataDir()
-        val command = OlcRtcCommand(
+        val olcRtcCommand = OlcRtcCommand(
             binary = binary,
             location = config,
             socksHost = socksSettings.host,
@@ -320,9 +331,11 @@ class DesktopVpnManager private constructor(
             socksUser = socksSettings.username,
             socksPass = socksSettings.password,
             dataDir = dataDir
-        ).args()
+        )
+        val configPath = writeOlcRtcClientConfig(olcRtcCommand)
+        val command = olcRtcCommand.args(configPath)
 
-        addLog("Starting olcRTC carrier=$provider, transport=${config.transport}, room=${config.id}, port=${socksSettings.port}")
+        addLog("Starting olcRTC provider=$provider, transport=${config.transport}, room=${config.id}, port=${socksSettings.port}")
 
         if (privileged) {
             addLog("Linux TUN mode starts olcRTC with elevated privileges to bypass the TUN route")
@@ -335,7 +348,15 @@ class DesktopVpnManager private constructor(
         processBuilder.environment()["NO_PROXY"] = "127.0.0.1,localhost"
         processBuilder.environment()["no_proxy"] = "127.0.0.1,localhost"
 
-        val startedProcess = processBuilder.start()
+        val startedProcess = try {
+            processBuilder.start()
+        } catch (e: Exception) {
+            runCatching { Files.deleteIfExists(configPath) }
+            if (olcRtcConfigPath == configPath) {
+                olcRtcConfigPath = null
+            }
+            throw e
+        }
 
         val readerJob = scope.launch {
             startedProcess.inputStream.bufferedReader().useLines { lines ->
@@ -359,6 +380,23 @@ class DesktopVpnManager private constructor(
         }
 
         return startedProcess
+    }
+
+    private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
+        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        Files.createDirectories(runtimeDir)
+        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
+        deleteOlcRtcConfig()
+        olcRtcConfigPath = path
+        return path
+    }
+
+    private fun deleteOlcRtcConfig() {
+        olcRtcConfigPath?.let { path ->
+            runCatching { Files.deleteIfExists(path) }
+        }
+        olcRtcConfigPath = null
     }
 
     private fun startTunLogReader(target: Process) {

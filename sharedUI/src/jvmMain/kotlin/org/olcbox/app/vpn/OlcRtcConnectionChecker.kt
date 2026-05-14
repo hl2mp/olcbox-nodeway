@@ -19,6 +19,8 @@ import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
@@ -26,6 +28,7 @@ internal object OlcRtcConnectionChecker {
 
     suspend fun check(
         locationConfig: LocationConfig,
+        deviceId: String = DEFAULT_DEVICE_ID,
         privileged: Boolean = false
     ): Long? {
         return withContext(Dispatchers.IO) {
@@ -41,7 +44,7 @@ internal object OlcRtcConnectionChecker {
                             config.bypassProvider,
                             config.transport,
                             config.id,
-                            config.clientId,
+                            deviceId,
                             config.key,
                             socksPort.toLong(),
                             OLC_READY_TIMEOUT_MS,
@@ -77,6 +80,7 @@ internal object OlcRtcConnectionChecker {
 
     suspend fun ping(
         locationConfig: LocationConfig,
+        deviceId: String = DEFAULT_DEVICE_ID,
         privileged: Boolean = false
     ): Long? {
         return withContext(Dispatchers.IO) {
@@ -92,7 +96,7 @@ internal object OlcRtcConnectionChecker {
                             config.bypassProvider,
                             config.transport,
                             config.id,
-                            config.clientId,
+                            deviceId,
                             config.key,
                             socksPort.toLong(),
                             HTTP_PING_TIMEOUT_MS,
@@ -243,20 +247,38 @@ internal object OlcRtcConnectionChecker {
             socksHost = PacServer.LOCAL_SOCKS_HOST,
             socksPort = socksPort,
             dataDir = dataDir
-        ).args()
+        )
+        val configPath = writeOlcRtcClientConfig(command)
 
         val processBuilder = ProcessBuilder(
-            if (privileged) LinuxPrivilege.command(command) else command
+            if (privileged) LinuxPrivilege.command(command.args(configPath)) else command.args(configPath)
         ).redirectErrorStream(true)
 
         processBuilder.environment()["NO_PROXY"] = "127.0.0.1,localhost"
         processBuilder.environment()["no_proxy"] = "127.0.0.1,localhost"
 
-        val process = processBuilder.start()
+        val process = try {
+            processBuilder.start()
+        } catch (e: Exception) {
+            runCatching { Files.deleteIfExists(configPath) }
+            throw e
+        }
 
         coroutineScopeReader(scope, process, ready)
+        scope.launch(Dispatchers.IO) {
+            runCatching { process.waitFor() }
+            runCatching { Files.deleteIfExists(configPath) }
+        }
 
         return process
+    }
+
+    private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
+        val runtimeDir = DesktopNativeAssets.resolveOlcRtcDataDir().parent.resolve("runtime")
+        Files.createDirectories(runtimeDir)
+        val path = Files.createTempFile(runtimeDir, "olcrtc-check-", ".yaml")
+        Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
+        return path
     }
 
     private fun coroutineScopeReader(
@@ -381,4 +403,5 @@ internal object OlcRtcConnectionChecker {
 
     private const val PROCESS_STOP_TIMEOUT_MS = 3_000L
     private const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+    private const val DEFAULT_DEVICE_ID = "olcbox"
 }

@@ -22,4 +22,5 @@ interface LocationsRepository {
     suspend fun getActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)
     suspend fun getActiveLocation(): LocationEntry?
+    suspend fun getDeviceIdentity(): String
 }

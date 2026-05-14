@@ -27,7 +27,6 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MeetingRoom
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,7 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -109,7 +107,6 @@ fun LocationSettingsScreen(
     val config = viewModel.editingConfig
     val name = viewModel.editingName
     val isSaving = viewModel.isSaving
-    val focusManager = LocalFocusManager.current
     val normalizedTransport = LocationConfig.normalizeTransport(
         config.transport,
         config.bypassProvider
@@ -178,7 +175,7 @@ fun LocationSettingsScreen(
             }
 
             item {
-                CarrierPicker(
+                ProviderPicker(
                     selectedProvider = config.bypassProvider,
                     enabled = !isSaving,
                     onProviderSelected = viewModel::onBypassProviderChanged
@@ -233,25 +230,7 @@ fun LocationSettingsScreen(
                     leadingIcon = Icons.Rounded.Key,
                     onClear = { viewModel.onPasswordChanged("") },
                     visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
-                )
-            }
-
-            item {
-                SettingsTextField(
-                    value = config.clientId,
-                    onValueChange = viewModel::onClientIdChanged,
-                    label = "Client ID",
-                    placeholder = "android-01",
-                    enabled = !isSaving,
-                    isError = viewModel.clientIdError != null,
-                    supportingText = viewModel.clientIdError,
-                    leadingIcon = Icons.Rounded.Person,
-                    onClear = { viewModel.onClientIdChanged("") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(
-                        onDone = { focusManager.clearFocus() }
-                    )
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
                 )
             }
 
@@ -288,7 +267,7 @@ private fun SectionTitle(
 }
 
 @Composable
-private fun CarrierPicker(
+private fun ProviderPicker(
     selectedProvider: String,
     enabled: Boolean,
     onProviderSelected: (String) -> Unit
@@ -301,7 +280,7 @@ private fun CarrierPicker(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         SectionTitle(
-            title = "Carrier"
+            title = "Auth provider"
         )
 
         SingleChoiceSegmentedButtonRow(

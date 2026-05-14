@@ -41,20 +41,20 @@ class DesktopProxyModeTest {
                 location = LocationConfig("Test", "room-$provider", "b".repeat(64), provider),
                 socksHost = "127.0.0.1",
                 socksPort = 10808
-            ).args()
+            )
+            val args = command.args(Path.of("/tmp/client.yaml"))
+            val yaml = command.yaml()
 
-            assertEquals("/tmp/olcrtc", command[0])
-            assertEquals(listOf("-mode", "cnc"), command.slice(1..2))
-            assertContains(command, "-transport")
-            assertContains(command, LocationConfig.TRANSPORT_VP8CHANNEL)
-            assertContains(command, "-vp8-fps")
-            assertContains(command, "60")
-            assertContains(command, "-vp8-batch")
-            assertContains(command, "64")
-            assertEquals(OlcRtcCommand.desktopProviderArg(provider), command[command.indexOf("-carrier") + 1])
-            assertEquals(LocationConfig.DEFAULT_CLIENT_ID, command[command.indexOf("-client-id") + 1])
-            assertContains(command, "room-$provider")
-            assertContains(command, "10808")
+            assertEquals(listOf("/tmp/olcrtc", "/tmp/client.yaml"), args)
+            assertContains(yaml, "mode: cnc")
+            assertContains(yaml, "provider: '${OlcRtcCommand.desktopProviderArg(provider)}'")
+            assertContains(yaml, "transport: '${LocationConfig.TRANSPORT_VP8CHANNEL}'")
+            assertContains(yaml, "id: 'room-$provider'")
+            assertContains(yaml, "port: 10808")
+            assertContains(yaml, "vp8:")
+            assertContains(yaml, "fps: 60")
+            assertContains(yaml, "batch_size: 64")
+            assertTrue("client-id" !in yaml)
         }
     }
 
@@ -70,11 +70,11 @@ class DesktopProxyModeTest {
                 transport = LocationConfig.TRANSPORT_DATACHANNEL
             ),
             dataDir = Path.of("/tmp/olcbox-data")
-        ).args()
+        ).yaml()
 
-        assertContains(command, LocationConfig.TRANSPORT_DATACHANNEL)
-        assertTrue("-vp8-fps" !in command)
-        assertEquals("/tmp/olcbox-data", command[command.indexOf("-data") + 1])
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_DATACHANNEL}'")
+        assertTrue("vp8:" !in command)
+        assertContains(command, "data: '/tmp/olcbox-data'")
     }
 
     @Test
@@ -88,14 +88,15 @@ class DesktopProxyModeTest {
                 bypassProvider = LocationConfig.PROVIDER_TELEMOST,
                 transport = LocationConfig.TRANSPORT_SEICHANNEL
             )
-        ).args()
+        ).yaml()
 
-        assertContains(command, LocationConfig.TRANSPORT_SEICHANNEL)
-        assertEquals("60", command[command.indexOf("-fps") + 1])
-        assertEquals("64", command[command.indexOf("-batch") + 1])
-        assertEquals("900", command[command.indexOf("-frag") + 1])
-        assertEquals("2000", command[command.indexOf("-ack-ms") + 1])
-        assertTrue("-vp8-fps" !in command)
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_SEICHANNEL}'")
+        assertContains(command, "sei:")
+        assertContains(command, "fps: 60")
+        assertContains(command, "batch_size: 64")
+        assertContains(command, "fragment_size: 900")
+        assertContains(command, "ack_timeout_ms: 2000")
+        assertTrue("vp8:" !in command)
     }
 
     @Test
@@ -138,9 +139,9 @@ class DesktopProxyModeTest {
                     key = "b".repeat(64),
                     bypassProvider = provider
                 )
-            ).args()
+            ).yaml()
 
-            assertEquals("wbstream", command[command.indexOf("-carrier") + 1])
+            assertContains(command, "provider: 'wbstream'")
         }
     }
 

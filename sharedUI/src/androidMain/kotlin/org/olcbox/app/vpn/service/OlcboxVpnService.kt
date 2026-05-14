@@ -36,6 +36,7 @@ import mobile.SocketProtector
 import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
+import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.vpn.AndroidConnectionMode
@@ -73,6 +74,9 @@ class OlcboxVpnService : VpnService() {
     private val tunnelMutex = Mutex()
     private val repository: LocationsRepository by lazy {
         LocationsRepositoryImpl(LocationsDataSourceImpl(applicationContext))
+    }
+    private val deviceIdentityProvider by lazy {
+        PersistentDeviceIdentityProvider(LocationsDataSourceImpl(applicationContext))
     }
 
     private var startupJob: Job? = null
@@ -487,6 +491,7 @@ class OlcboxVpnService : VpnService() {
         return try {
             installMobileCallbacks()
             val targetSocksPort = socksListenPort
+            val deviceId = deviceIdentityProvider.hwid()
             resetRtcHealthState()
 
             waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
@@ -503,7 +508,7 @@ class OlcboxVpnService : VpnService() {
                 config.bypassProvider,
                 config.transport,
                 config.id,
-                config.clientId,
+                deviceId,
                 config.key,
                 targetSocksPort.toLong(),
                 socksUsername,

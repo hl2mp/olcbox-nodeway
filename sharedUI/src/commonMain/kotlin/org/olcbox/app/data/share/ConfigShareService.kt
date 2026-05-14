@@ -27,8 +27,6 @@ object ConfigShareService {
             append(normalized.id)
             append('#')
             append(normalized.key)
-            append('%')
-            append(normalized.clientId)
             val name = normalized.displayName()
             if (name.isNotBlank() && name != normalized.id) {
                 append('$')
