@@ -398,6 +398,94 @@ jobs:
           name: Olcbox-android-apk
           path: olcbox/dist/Olcbox-*-android-release.apk
 
+  build-ios:
+    needs: release_version
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
+
+    steps:
+      - name: Checkout olcbox
+        uses: actions/checkout@v6
+        with:
+          path: olcbox
+
+      - name: Checkout olcrtc
+        uses: actions/checkout@v6
+        with:
+          repository: openlibrecommunity/olcrtc
+          ref: master
+          path: olcrtc
+          submodules: recursive
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Go mobile tooling
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+
+      - name: Initialize gomobile
+        working-directory: olcrtc
+        run: |
+          gomobile init
+
+      - name: Build unsigned iOS app
+        working-directory: olcbox
+        run: |
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build/ios-ipa/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: olcbox
+        run: |
+          app_path="build/ios-ipa/DerivedData/Build/Products/Release-iphoneos/iosApp.app"
+          if [ ! -d "$app_path" ]; then
+            echo "iOS app product was not found at $app_path" >&2
+            exit 1
+          fi
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${OLCBOX_VERSION}" "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${OLCBOX_VERSION_CODE}" "$app_path/Info.plist"
+
+          rm -rf build/ios-ipa/package
+          mkdir -p build/ios-ipa/package/Payload dist
+          cp -R "$app_path" build/ios-ipa/package/Payload/
+          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/Olcbox-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+          unzip -t "dist/Olcbox-${OLCBOX_VERSION}-ios-unsigned.ipa"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Olcbox-ios-unsigned-ipa
+          path: olcbox/dist/Olcbox-*-ios-unsigned.ipa
+
   publish-nightly:
     runs-on: ubuntu-latest
     permissions:
@@ -410,6 +498,7 @@ jobs:
       - build-macos
       - build-linux
       - build-android
+      - build-ios
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
@@ -437,7 +526,7 @@ jobs:
           fi
 
           {
-            echo "Latest desktop and Android builds from public GitHub Actions CI."
+            echo "Latest desktop, Android, and iOS builds from public GitHub Actions CI."
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Source branch: \`${GITHUB_REF_NAME}\`"

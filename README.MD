@@ -50,6 +50,7 @@ The author does not support or encourage such use.
 | Platform | Modes | Runtime |
 | --- | --- | --- |
 | Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
+| iOS | Proxy | local `olcrtc` SOCKS5 hosted by a Swift shell |
 | macOS | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
 | Windows | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
 | Linux | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, policy routes |
@@ -86,6 +87,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | --- | --- |
 | Android debug APK | `./gradlew :androidApp:assembleDebug` |
 | Install Android debug APK | `./gradlew :androidApp:installDebug` |
+| iOS simulator app | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` |
 | Run desktop app | `./gradlew :desktopApp:run` |
 | Run desktop app with hot reload | `./gradlew :desktopApp:hotRun --auto` |
 | Build desktop native assets | `./gradlew :desktopApp:buildDesktopNativeAssets` |
@@ -99,6 +101,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | --- | --- | --- |
 | Android debug | `./gradlew :androidApp:assembleDebug` | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` |
 | Android release | `./gradlew :androidApp:assembleRelease` | `androidApp/build/outputs/apk/release/androidApp-release.apk` |
+| iOS simulator | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` | Xcode DerivedData app product |
 | macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/Olcbox-1.0.0.dmg` |
 | Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\Olcbox-1.0.0.exe` |
 | Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\Olcbox-1.0.0.msi` |
