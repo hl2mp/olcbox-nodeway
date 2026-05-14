@@ -9,15 +9,41 @@ permissions:
   contents: read
 
 env:
-  OLCBOX_VERSION: 1.0.${{ github.run_number }}
-  OLCBOX_VERSION_CODE: ${{ github.run_number }}
+  OLCBOX_VERSION_MAJOR_MINOR: "1.0"
+  # The alananisimov/olcbox workflow was recreated after 1.0.69, so
+  # github.run_number restarted. Run #6 must publish Android versionCode 70.
+  OLCBOX_RELEASE_RUN_NUMBER_BASE: "5"
+  OLCBOX_RELEASE_PATCH_BASE: "69"
 
 jobs:
+  release_version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+
+    steps:
+      - name: Resolve release version
+        id: version
+        run: |
+          patch=$((OLCBOX_RELEASE_PATCH_BASE + GITHUB_RUN_NUMBER - OLCBOX_RELEASE_RUN_NUMBER_BASE))
+
+          if [ "$patch" -le "$OLCBOX_RELEASE_PATCH_BASE" ]; then
+            echo "Computed Android versionCode ${patch} is not greater than ${OLCBOX_RELEASE_PATCH_BASE}" >&2
+            exit 1
+          fi
+
+          echo "version=${OLCBOX_VERSION_MAJOR_MINOR}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${patch}" >> "$GITHUB_OUTPUT"
+
   build-windows:
+    needs: release_version
     runs-on: windows-latest
     permissions:
       contents: read
     env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
       WINDOWS_CODESIGN_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_BASE64 }}
       WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD }}
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
@@ -142,6 +168,7 @@ jobs:
             olcbox/dist/Olcbox-*-windows-amd64-portable.zip
 
   build-macos:
+    needs: release_version
     strategy:
       fail-fast: false
       matrix:
@@ -153,6 +180,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
 
     steps:
       - name: Checkout olcbox
@@ -199,9 +229,13 @@ jobs:
           path: olcbox/dist/Olcbox-*-macos-${{ matrix.arch }}.dmg
 
   build-linux:
+    needs: release_version
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
 
     steps:
       - name: Checkout olcbox
@@ -261,11 +295,14 @@ jobs:
           path: olcbox/dist/Olcbox-*-linux-amd64.AppImage
 
   build-android:
+    needs: release_version
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
       ANDROID_NDK_VERSION: "28.2.13676358"
       ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
       ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
@@ -368,10 +405,14 @@ jobs:
       id-token: write
       attestations: write
     needs:
+      - release_version
       - build-windows
       - build-macos
       - build-linux
       - build-android
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
 
     steps:
       - name: Checkout olcbox
