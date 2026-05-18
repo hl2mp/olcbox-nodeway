@@ -53,6 +53,7 @@ data class LocationConfig(
         const val PROVIDER_JAZZ = "jazz"
         const val PROVIDER_TELEMOST = "telemost"
         const val PROVIDER_WB_STREAM = "wbstream"
+        const val PROVIDER_JITSI = "jitsi"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
@@ -66,7 +67,8 @@ data class LocationConfig(
         val supportedBypassProviders = listOf(
             PROVIDER_JAZZ,
             PROVIDER_TELEMOST,
-            PROVIDER_WB_STREAM
+            PROVIDER_WB_STREAM,
+            PROVIDER_JITSI
         )
 
         val supportedTransports = listOf(
@@ -78,6 +80,7 @@ data class LocationConfig(
         fun supportedTransportsForProvider(provider: String): List<String> {
             return when (normalizeProvider(provider)) {
                 PROVIDER_TELEMOST -> listOf(TRANSPORT_VP8CHANNEL, TRANSPORT_SEICHANNEL)
+                PROVIDER_JITSI -> listOf(TRANSPORT_DATACHANNEL)
                 else -> supportedTransports
             }
         }
@@ -87,6 +90,7 @@ data class LocationConfig(
                 PROVIDER_JAZZ, "sberjazz", "sber_jazz" -> PROVIDER_JAZZ
                 PROVIDER_TELEMOST, "yandex", "yandex_telemost" -> PROVIDER_TELEMOST
                 PROVIDER_WB_STREAM, "wbstream", "wb-stream", "wildberries" -> PROVIDER_WB_STREAM
+                PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -98,7 +102,9 @@ data class LocationConfig(
                 TRANSPORT_SEICHANNEL, "sei", "sei_channel", "sei-channel", "h264_sei" -> TRANSPORT_SEICHANNEL
                 else -> DEFAULT_TRANSPORT
             }
-            return normalized.takeIf { it in supportedTransportsForProvider(provider) }
+            val supported = supportedTransportsForProvider(provider)
+            return normalized.takeIf { it in supported }
+                ?: supported.firstOrNull()
                 ?: DEFAULT_TRANSPORT
         }
 
@@ -107,6 +113,7 @@ data class LocationConfig(
                 PROVIDER_JAZZ -> "Jazz"
                 PROVIDER_TELEMOST -> "Telemost"
                 PROVIDER_WB_STREAM -> "WB Stream"
+                PROVIDER_JITSI -> "Jitsi"
                 else -> "WB Stream"
             }
         }

@@ -36,7 +36,7 @@ The author does not support or encourage such use.
 ## Features
 - One-tap tunnel start/stop with live relay status.
 - Saved connection profiles with active location selection.
-- Providers: Jazz, Telemost, WB Stream.
+- Providers: Jazz, Telemost, WB Stream, Jitsi.
 - Transports: DataChannel, VP8, SEI.
 - VP8 tuning: FPS and batch size.
 - Connectivity checks for individual locations.

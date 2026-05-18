@@ -36,6 +36,10 @@ class DesktopProxyModeTest {
     @Test
     fun olcRtcCommandUsesLocationProviderRoomAndKey() {
         LocationConfig.supportedBypassProviders.forEach { provider ->
+            val expectedTransport = LocationConfig.normalizeTransport(
+                LocationConfig.DEFAULT_TRANSPORT,
+                provider
+            )
             val command = OlcRtcCommand(
                 binary = Path.of("/tmp/olcrtc"),
                 location = LocationConfig("Test", "room-$provider", "b".repeat(64), provider),
@@ -48,12 +52,14 @@ class DesktopProxyModeTest {
             assertEquals(listOf("/tmp/olcrtc", "/tmp/client.yaml"), args)
             assertContains(yaml, "mode: cnc")
             assertContains(yaml, "provider: '${OlcRtcCommand.desktopProviderArg(provider)}'")
-            assertContains(yaml, "transport: '${LocationConfig.TRANSPORT_VP8CHANNEL}'")
+            assertContains(yaml, "transport: '$expectedTransport'")
             assertContains(yaml, "id: 'room-$provider'")
             assertContains(yaml, "port: 10808")
-            assertContains(yaml, "vp8:")
-            assertContains(yaml, "fps: 60")
-            assertContains(yaml, "batch_size: 64")
+            if (expectedTransport == LocationConfig.TRANSPORT_VP8CHANNEL) {
+                assertContains(yaml, "vp8:")
+                assertContains(yaml, "fps: 60")
+                assertContains(yaml, "batch_size: 64")
+            }
             assertTrue("client-id" !in yaml)
         }
     }

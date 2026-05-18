@@ -66,6 +66,7 @@ class LocationViewModel(
     private val pingSemaphore = Semaphore(LOCATION_PING_PARALLELISM)
     private var loadLocationsJob: Job? = null
     private var loadLocationsRequest = 0
+    private val providerDrafts = mutableMapOf<String, ProviderDraft>()
 
     var editingConfig by mutableStateOf(LocationConfig())
     var editingName by mutableStateOf("")
@@ -73,6 +74,8 @@ class LocationViewModel(
     var editingSubscriptionUrl by mutableStateOf<String?>(null)
         private set
     var editingSubscriptionIntervalHours by mutableStateOf(SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS.toString())
+        private set
+    var editingServiceProvider by mutableStateOf(LocationConfig.DEFAULT_BYPASS_PROVIDER)
         private set
 
     var isSaving by mutableStateOf(false)
@@ -323,6 +326,7 @@ class LocationViewModel(
         serverError = null
         keyError = null
         isSaving = false
+        providerDrafts.clear()
 
         if (id == null) {
             editingId = null
@@ -341,6 +345,16 @@ class LocationViewModel(
                     ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
                 ).toString()
         }
+        val provider = LocationConfig.normalizeProvider(editingConfig.bypassProvider)
+        editingServiceProvider = if (provider == LocationConfig.PROVIDER_JITSI) {
+            LocationConfig.DEFAULT_BYPASS_PROVIDER
+        } else {
+            provider
+        }
+        providerDrafts[provider] = ProviderDraft(
+            room = editingConfig.id,
+            key = editingConfig.key
+        )
     }
 
     fun onNameChanged(value: String) {
@@ -362,11 +376,28 @@ class LocationViewModel(
 
     fun onBypassProviderChanged(value: String) {
         val provider = LocationConfig.normalizeProvider(value)
+        val currentProvider = LocationConfig.normalizeProvider(editingConfig.bypassProvider)
+        if (provider == currentProvider) return
+
+        providerDrafts[currentProvider] = ProviderDraft(
+            room = editingConfig.id,
+            key = editingConfig.key
+        )
+
+        if (provider != LocationConfig.PROVIDER_JITSI) {
+            editingServiceProvider = provider
+        }
+
+        val restored = providerDrafts[provider] ?: ProviderDraft()
 
         editingConfig = editingConfig.copy(
             bypassProvider = provider,
-            transport = LocationConfig.normalizeTransport(editingConfig.transport, provider)
+            transport = LocationConfig.normalizeTransport(editingConfig.transport, provider),
+            id = restored.room,
+            key = restored.key
         )
+        serverError = null
+        keyError = null
     }
 
     fun onTransportChanged(value: String) {
@@ -400,9 +431,14 @@ class LocationViewModel(
     }
 
     private fun validateServer(server: String) {
+        val roomLabel = if (editingConfig.bypassProvider == LocationConfig.PROVIDER_JITSI) {
+            "Room URL"
+        } else {
+            "Room ID"
+        }
         serverError = when {
-            server.isBlank() -> "Room ID cannot be empty"
-            server.length > 256 -> "Room ID is too long"
+            server.isBlank() -> "$roomLabel cannot be empty"
+            server.length > 256 -> "$roomLabel is too long"
             else -> null
         }
     }
@@ -459,4 +495,9 @@ class LocationViewModel(
         const val LOCATION_PING_RETRY_DELAY_MS = 0L
         const val LOCATION_PING_PARALLELISM = 4
     }
+
+    private data class ProviderDraft(
+        val room: String = "",
+        val key: String = ""
+    )
 }

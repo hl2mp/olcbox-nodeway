@@ -173,6 +173,23 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
+    fun importsJitsiOlcRtcUriWithRoomUrl() = runTest {
+        val source = FakeLocationsDataSource()
+        val key = "b".repeat(64)
+        val input = "olcrtc://jitsi?datachannel@https://meet.cryptopro.ru/myroom#$key${'$'}Jitsi room"
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        val location = imported.locations.single().location
+        assertEquals(LocationConfig.PROVIDER_JITSI, location.bypassProvider)
+        assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, location.transport)
+        assertEquals("https://meet.cryptopro.ru/myroom", location.id)
+        assertEquals("Jitsi room", location.name)
+    }
+
+    @Test
     fun importsOlcRtcSubscriptionAndAppliesLocalNames() = runTest {
         val source = FakeLocationsDataSource()
         val input = """
@@ -406,6 +423,14 @@ class LocationsRepositoryImplTest {
         assertEquals(
             LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ),
             LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_WB_STREAM)
+        )
+        assertEquals(
+            listOf(LocationConfig.TRANSPORT_DATACHANNEL),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JITSI)
+        )
+        assertEquals(
+            LocationConfig.TRANSPORT_DATACHANNEL,
+            LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_VP8CHANNEL, LocationConfig.PROVIDER_JITSI)
         )
     }
 

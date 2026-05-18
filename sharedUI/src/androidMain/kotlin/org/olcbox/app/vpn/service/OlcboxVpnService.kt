@@ -93,6 +93,10 @@ class OlcboxVpnService : VpnService() {
     private var lastRtcFailureAtMs = 0L
     @Volatile
     private var rtcFailureCount = 0
+    @Volatile
+    private var lastMobileProvider: String? = null
+    @Volatile
+    private var lastJitsiStopCompletedAtMs = 0L
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2socksThread: Thread? = null
@@ -225,8 +229,6 @@ class OlcboxVpnService : VpnService() {
             }
         )
         refreshWakeLock(force = true)
-        registerNetworkMonitor()
-        updateUnderlyingNetwork(findActiveUpstreamNetwork())
         startTunnel(isMigration = false)
         return START_REDELIVER_INTENT
     }
@@ -339,17 +341,22 @@ class OlcboxVpnService : VpnService() {
 
         startupJob = scope.launch {
             cleanupJob?.takeIf { it.isActive }?.let {
-                addLog("Waiting for previous VPN stop to finish")
+                addLog("Waiting for previous olcRTC cleanup")
                 val completed = withTimeoutOrNull(PREVIOUS_STOP_WAIT_MS) {
                     it.join()
                     true
                 } ?: false
 
                 if (!completed) {
-                    addLog("Previous VPN stop is still pending; forcing transport cleanup")
+                    addLog("Previous olcRTC cleanup is still pending; forcing transport cleanup")
                     it.cancel()
                     stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                 }
+            }
+
+            if (!isMigration) {
+                registerNetworkMonitor()
+                updateUnderlyingNetwork(findActiveUpstreamNetwork())
             }
 
             tunnelMutex.withLock {
@@ -498,12 +505,14 @@ class OlcboxVpnService : VpnService() {
             if (isLocalSocksPortOpen(targetSocksPort)) {
                 throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
             }
+            waitForJitsiRoomCleanup(config.bypassProvider)
             bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
             configureMobileTransport(config)
             addLog(
                 "Starting olcRTC provider=${config.bypassProvider}, " +
                     "transport=${config.transport}, room=${config.id}"
             )
+            lastMobileProvider = config.bypassProvider
             Mobile.startWithTransport(
                 config.bypassProvider,
                 config.transport,
@@ -538,10 +547,20 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
+    private suspend fun waitForJitsiRoomCleanup(provider: String) {
+        if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
+
+        val waitMs = JITSI_RESTART_SETTLE_MS -
+            (System.currentTimeMillis() - lastJitsiStopCompletedAtMs)
+        if (waitMs <= 0L) return
+
+        addLog("Waiting for previous Jitsi room cleanup")
+        delay(waitMs)
+    }
+
     private fun configureMobileTransport(location: LocationConfig) {
         val config = location.normalized()
         Mobile.setProviders()
-        Mobile.setLink("direct")
         Mobile.setTransport(config.transport)
         Mobile.setDNS("1.1.1.1:53")
         Mobile.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
@@ -770,6 +789,8 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun cleanup(stopService: Boolean = true) {
+        if (cleanupJob?.isActive == true) return
+
         val status = OlcboxVpnState.status.value
         if (status is VpnStatus.Disconnected &&
             vpnInterface == null &&
@@ -799,15 +820,43 @@ class OlcboxVpnService : VpnService() {
 
         cleanupJob = scope.launch {
             try {
-                stopTransportProcesses(closeTun = true, stopMobileBeforeTun = true)
-                recoveryRequestedForGeneration = 0L
+                stopVisibleVpnProcesses()
                 if (generation == cleanupGeneration) {
                     setStatus(VpnStatus.Disconnected)
                     addLog("${activeModeLabel()} stopped")
                 }
+
+                stopMobileAndWait()
+                recoveryRequestedForGeneration = 0L
             } finally {
                 if (stopService && generation == cleanupGeneration) stopSelf()
             }
+        }
+    }
+
+    private suspend fun stopVisibleVpnProcesses() {
+        val tunThread = tun2socksThread
+        stopAuthenticatedSocksProxy()
+        stopTun2socks()
+        cleanupVpnInterface()
+        tunThread?.interrupt()
+        waitForTun2socksStopped(tunThread)
+        if (tun2socksThread == tunThread) {
+            tun2socksThread = null
+        }
+        unbindProcessFromNetwork()
+    }
+
+    private suspend fun waitForTun2socksStopped(thread: Thread?) {
+        if (thread == null) return
+        val stopped = withTimeoutOrNull(TUN2SOCKS_STOP_WAIT_MS) {
+            while (thread.isAlive) {
+                delay(SOCKS_RELEASE_POLL_MS)
+            }
+            true
+        } ?: false
+        if (!stopped) {
+            addLog("tun2socks cleanup is still pending")
         }
     }
 
@@ -846,7 +895,12 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun stopMobile() {
+        val provider = lastMobileProvider
+        val wasRunning = Mobile.isRunning()
         runCatching { Mobile.stop() }
+        if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
+            lastJitsiStopCompletedAtMs = System.currentTimeMillis()
+        }
     }
 
     private fun stopAuthenticatedSocksProxy() {
@@ -1399,7 +1453,9 @@ class OlcboxVpnService : VpnService() {
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858
         private const val MOBILE_READY_TIMEOUT_MS = 25_000L
-        private const val PREVIOUS_STOP_WAIT_MS = 2_000L
+        private const val PREVIOUS_STOP_WAIT_MS = 12_000L
+        private const val JITSI_RESTART_SETTLE_MS = 2_000L
+        private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
         private const val TUNNEL_HANDOFF_DELAY_MS = 300L
         private const val NETWORK_LOSS_FALLBACK_DELAY_MS = 300L
         private const val WATCHDOG_INTERVAL_MS = 5_000L
