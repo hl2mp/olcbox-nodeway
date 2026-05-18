@@ -75,6 +75,13 @@ jobs:
           path: olcrtc
           submodules: recursive
 
+      - name: Patch universal-carrier olcrtc Windows CLI
+        if: needs.release_version.outputs.olcrtc_ref == 'refactor/universal-carrier'
+        shell: pwsh
+        run: |
+          & "${{ github.workspace }}\olcbox\.github\scripts\patch-olcrtc-windows-cli.ps1" `
+            -OlcRtcPath "${{ github.workspace }}\olcrtc"
+
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -512,6 +519,9 @@ jobs:
       - build-linux
       - build-android
       - build-ios
+    concurrency:
+      group: publish-${{ github.repository }}-${{ needs.release_version.outputs.nightly_tag }}
+      cancel-in-progress: false
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
@@ -582,8 +592,32 @@ jobs:
           git tag -f "$OLCBOX_NIGHTLY_TAG" "$GITHUB_SHA"
           git push --force origin "refs/tags/$OLCBOX_NIGHTLY_TAG"
 
-          gh release create "$OLCBOX_NIGHTLY_TAG" "${assets[@]}" \
+          gh release create "$OLCBOX_NIGHTLY_TAG" \
             --target "$GITHUB_SHA" \
             --title "$OLCBOX_NIGHTLY_TITLE" \
             --notes-file release-notes.md \
-            --prerelease
+            --prerelease \
+            --draft
+
+          # Give GitHub a moment to make the draft release available for asset uploads.
+          sleep 5
+
+          for asset in "${assets[@]}"; do
+            echo "Uploading ${asset}"
+            for attempt in 1 2 3; do
+              if gh release upload "$OLCBOX_NIGHTLY_TAG" "$asset" --clobber; then
+                break
+              fi
+
+              if [ "$attempt" -eq 3 ]; then
+                echo "Failed to upload ${asset} after ${attempt} attempts" >&2
+                exit 1
+              fi
+
+              echo "Upload failed for ${asset}; retrying in 10 seconds" >&2
+              sleep 10
+            done
+          done
+
+          gh release edit "$OLCBOX_NIGHTLY_TAG" --draft=false --prerelease
+
