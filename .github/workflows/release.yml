@@ -103,7 +103,7 @@ jobs:
         shell: pwsh
         working-directory: olcbox
         env:
-          MSYS2_BASH: ${{ runner.temp }}\setup-msys2\msys64\usr\bin\bash.exe
+          MSYS2_CMD: ${{ runner.temp }}\setup-msys2\msys2.cmd
         run: |
           $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
           .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" :desktopApp:packageReleaseExe :desktopApp:packageReleaseMsi :desktopApp:packageReleasePortableZip --stacktrace

@@ -107,15 +107,21 @@ fun desktopArchName(arch: String): String = when (arch.lowercase()) {
 
 fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-fun windowsMsysBashPath(): String {
-    System.getenv("MSYS2_BASH")?.takeIf { it.isNotBlank() }?.let { return it }
+fun windowsMsysCommand(script: String): List<String> {
+    val command = System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }
+        ?: windowsMsysCmdPath()
+    return listOf("cmd.exe", "/D", "/S", "/C", command, "-c", script)
+}
+
+fun windowsMsysCmdPath(): String {
+    System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }?.let { return it }
 
     val candidates = buildList {
         System.getenv("RUNNER_TEMP")
             ?.takeIf { it.isNotBlank() }
-            ?.let { add("$it\\setup-msys2\\msys64\\usr\\bin\\bash.exe") }
-        add("C:\\msys64\\usr\\bin\\bash.exe")
-        add("D:\\a\\_temp\\setup-msys2\\msys64\\usr\\bin\\bash.exe")
+            ?.let { add("$it\\setup-msys2\\msys2.cmd") }
+        add("D:\\a\\_temp\\setup-msys2\\msys2.cmd")
+        add("C:\\msys64\\msys2_shell.cmd")
     }
 
     return candidates.firstOrNull { File(it).isFile }
@@ -338,8 +344,7 @@ if (currentBuildOs.isWindows) {
         outputs.files(hevSocks5TunnelWindowsOutput, msysRuntimeWindowsOutput)
         workingDir = rootProject.layout.projectDirectory.asFile
         commandLine(
-            windowsMsysBashPath(),
-            "-lc",
+            windowsMsysCommand(
             """
             set -eu
             source_dir=${shellQuote(hevSocks5TunnelSourceDir.asFile.absolutePath)}
@@ -358,6 +363,7 @@ if (currentBuildOs.isWindows) {
             fi
             cp /usr/bin/msys-2.0.dll "${'$'}msys_runtime"
             """.trimIndent()
+            )
         )
     }
 
