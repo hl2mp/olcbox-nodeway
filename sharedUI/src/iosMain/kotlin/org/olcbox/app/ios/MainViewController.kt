@@ -31,8 +31,10 @@ import org.olcbox.app.ui.theme.AppTheme
 import org.olcbox.app.update.AppUpdateInfo
 import org.olcbox.app.update.AppUpdateSettings
 import org.olcbox.app.update.AppUpdateService
+import org.olcbox.app.update.IosUpdateSettingsStore
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
+import org.olcbox.app.update.isUpdateCheckDue
 import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.IosVpnManager
 import platform.UIKit.UIViewController
@@ -80,6 +82,7 @@ private class IosAppDependencies(
     val updateService = AppUpdateService(
         deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
     )
+    val updateSettingsStore = IosUpdateSettingsStore()
     val homeViewModel = HomeScreenViewModel(
         vpnManager = vpnManager,
         locationsRepository = locationsRepository,
@@ -112,6 +115,12 @@ private fun IosApp(
         }
     }
 
+    suspend fun saveUpdateSettings(settings: AppUpdateSettings) {
+        val normalized = settings.normalized()
+        updateSettings = normalized
+        dependencies.updateSettingsStore.save(normalized)
+    }
+
     fun checkUpdate(manual: Boolean) {
         scope.launch {
             val previousSettings = updateSettings
@@ -119,7 +128,7 @@ private fun IosApp(
             val result = dependencies.updateService.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
-            updateSettings = checkedSettings
+            saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
                     if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
@@ -145,8 +154,13 @@ private fun IosApp(
     }
 
     LaunchedEffect(Unit) {
+        val loaded = dependencies.updateSettingsStore.load()
+        updateSettings = loaded
         dependencies.locationViewModel.loadLocations()
         dependencies.homeViewModel.loadCurrentConfig()
+        if (loaded.isUpdateCheckDue(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
+            checkUpdate(manual = false)
+        }
     }
 
     AppTheme {
@@ -242,10 +256,14 @@ private fun IosApp(
                         )
                     },
                     onUpdateChannelSelected = { channel ->
-                        updateSettings = updateSettings.copy(channel = channel).normalized()
+                        scope.launch {
+                            saveUpdateSettings(updateSettings.copy(channel = channel))
+                        }
                     },
                     onUpdateIntervalSelected = { hours ->
-                        updateSettings = updateSettings.copy(intervalHours = hours).normalized()
+                        scope.launch {
+                            saveUpdateSettings(updateSettings.copy(intervalHours = hours))
+                        }
                     },
                     onCheckUpdatesClick = { checkUpdate(manual = true) },
                     onDownloadUpdateClick = { info ->
@@ -253,8 +271,10 @@ private fun IosApp(
                         updateOffer = null
                     },
                     onLaterUpdateClick = { info ->
-                        updateSettings = updateSettings.copy(lastSeenUpdateVersion = info.identity()).normalized()
-                        updateOffer = null
+                        scope.launch {
+                            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+                            updateOffer = null
+                        }
                     },
                     onSubscriptionShareClick = { url ->
                         platformBridge.shareText("Subscription", ConfigShareService.subscriptionQrText(url))

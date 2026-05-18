@@ -30,7 +30,6 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         defer { lock.unlock() }
 
         MobileSetProviders()
-        MobileSetLink("direct")
         MobileSetTransport(request.transportName)
         MobileSetDNS("1.1.1.1:53")
         MobileSetVP8Options(Int(request.vp8Fps), Int(request.vp8BatchSize))
