@@ -67,7 +67,7 @@ val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
     commandLine(
         "gomobile",
         "bind",
-        "-target=android",
+        "-target=android/arm,android/arm64,android/amd64",
         "-androidapi",
         "21",
         "-ldflags",

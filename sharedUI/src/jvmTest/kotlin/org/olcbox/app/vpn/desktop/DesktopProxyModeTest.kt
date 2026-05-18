@@ -24,13 +24,29 @@ class DesktopProxyModeTest {
         val server = PacServer(port = 0)
 
         server.start("127.0.0.1", 10808)
-        server.start("127.0.0.1", 10810)
+        server.start("127.0.0.1", 10810, "user", "pass")
 
         val pac = server.currentPacContent()
-        assertContains(pac, "SOCKS5 127.0.0.1:10810; SOCKS 127.0.0.1:10810")
+        assertContains(pac, "SOCKS5 user:pass@127.0.0.1:10810; SOCKS user:pass@127.0.0.1:10810")
         assertTrue("SOCKS5 127.0.0.1:10808" !in pac)
 
         server.stop()
+    }
+
+    @Test
+    fun pacEscapesSocksCredentialsInUserInfo() {
+        val pac = PacServer.generatePac(
+            socksHost = "127.0.0.1",
+            socksPort = 10808,
+            socksUsername = "user name",
+            socksPassword = "p@ss:word"
+        )
+
+        assertContains(
+            pac,
+            "SOCKS5 user%20name:p%40ss%3Aword@127.0.0.1:10808; " +
+                    "SOCKS user%20name:p%40ss%3Aword@127.0.0.1:10808"
+        )
     }
 
     @Test
@@ -220,6 +236,19 @@ class DesktopProxyModeTest {
         assertContains(config, "ipv4: 10.0.88.88")
         assertContains(config, "address: 127.0.0.1")
         assertContains(config, "port: 10808")
+        assertContains(config, "udp: 'tcp'")
+        assertContains(config, "mapdns:")
+        assertContains(config, "network: 100.64.0.0")
+    }
+
+    @Test
+    fun windowsTunConfigUsesWintunLocalSocksAndIpv4MapDns() {
+        val config = WindowsTunController.configContent(socksPort = 10812)
+
+        assertContains(config, "name: Olcbox")
+        assertContains(config, "ipv4: 10.0.88.88")
+        assertContains(config, "address: 127.0.0.1")
+        assertContains(config, "port: 10812")
         assertContains(config, "udp: 'tcp'")
         assertContains(config, "mapdns:")
         assertContains(config, "network: 100.64.0.0")

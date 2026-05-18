@@ -99,8 +99,6 @@ import org.olcbox.app.update.JvmUpdateSettingsStore
 import org.olcbox.app.update.ReleaseChannel
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
-import org.olcbox.app.update.isUpdateCheckDue
-import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.DesktopSocksProxySettings
 import org.olcbox.app.vpn.DesktopVpnManager
 import org.olcbox.app.vpn.JvmDesktopSocksProxySettingsStore
@@ -172,7 +170,7 @@ fun main() = application {
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
+                    if (manual || info.isUpdateAvailable) {
                         if (info.isDownloaded(checkedSettings)) {
                             updateOffer = null
                             updateMessage = "Latest ${info.channel.name.lowercase()} is already downloaded"
@@ -185,6 +183,7 @@ fun main() = application {
                             updateMessage = "Olcbox is up to date"
                         }
                     } else {
+                        updateOffer = null
                         updateMessage = null
                     }
                 },
@@ -229,9 +228,7 @@ fun main() = application {
         val loaded = dependencies.updateSettingsStore.load()
         updateSettings = loaded
         dependencies.vpnManager.updateSocksProxySettings(dependencies.socksProxySettingsStore.load())
-        if (loaded.isUpdateCheckDue(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
-            checkUpdate(manual = false)
-        }
+        checkUpdate(manual = false)
     }
 
     LaunchedEffect(desktopNotice) {

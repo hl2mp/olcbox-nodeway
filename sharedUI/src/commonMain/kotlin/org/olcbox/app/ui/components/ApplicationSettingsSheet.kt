@@ -725,7 +725,7 @@ private fun SharedUpdateOfferCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "${offer.channel.name} update available",
+                text = "Обновите приложение",
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold

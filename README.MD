@@ -52,7 +52,7 @@ The author does not support or encourage such use.
 | Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
 | iOS | Proxy | local `olcrtc` SOCKS5 hosted by a Swift shell |
 | macOS | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
-| Windows | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
+| Windows | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, Wintun |
 | Linux | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, policy routes |
 
 ## Requirements
@@ -63,6 +63,7 @@ The author does not support or encourage such use.
 | Android | Android Studio, Android SDK, Android NDK |
 | Desktop native assets | Go and local `olcrtc` fork |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
+| Windows TUN | Administrator launch rights and bundled Wintun runtime |
 
 Default local `olcrtc` path:
 
@@ -117,10 +118,12 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Windows `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-windows-amd64.exe` |
 | Linux `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-amd64` |
 | Linux `hev-socks5-tunnel` ARM | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-arm64` |
+| Windows `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-windows-amd64.exe` |
+| Windows Wintun runtime | `desktopApp/build/generated/desktopNativeResources/native/wintun.dll` |
 
 ## Notes
 
-- Android native ABIs: `arm64-v8a`, `x86_64`.
+- Android native ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64`.
 - Android release builds require `keystore.properties` in the repository root.
 - macOS DMG output is not notarized unless signing/notarization is configured separately.
 - Windows installers must be built on Windows with `jpackage` and WiX available.

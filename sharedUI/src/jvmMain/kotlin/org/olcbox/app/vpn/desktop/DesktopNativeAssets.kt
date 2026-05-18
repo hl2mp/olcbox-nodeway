@@ -66,11 +66,16 @@ internal object DesktopNativeAssets {
 
     fun resolveHevSocks5TunnelBinary(): Path {
         val fileName = hevSocks5TunnelFileName()
-        return resolveBinary(
+        val binary = resolveBinary(
             fileName = fileName,
             resourceName = "native/$fileName",
             candidates = hevSocks5TunnelSourceCandidates(fileName)
         )
+        if (DesktopPaths.os == DesktopOs.Windows) {
+            copyRuntimeAsset("wintun.dll")
+            copyRuntimeAsset("msys-2.0.dll")
+        }
+        return binary
     }
 
     private fun resolveBinary(
@@ -121,7 +126,8 @@ internal object DesktopNativeAssets {
     fun hevSocks5TunnelFileName(): String {
         return when (DesktopPaths.os) {
             DesktopOs.Linux -> "hev-socks5-tunnel-linux-${desktopArch()}"
-            else -> error("hev-socks5-tunnel desktop binary is only used on Linux")
+            DesktopOs.Windows -> "hev-socks5-tunnel-windows-amd64.exe"
+            else -> error("hev-socks5-tunnel desktop binary is only used for TUN mode")
         }
     }
 
@@ -174,6 +180,29 @@ internal object DesktopNativeAssets {
             Path("desktopApp").resolve("build").resolve("generated").resolve("desktopNativeResources")
                 .resolve("native").resolve(fileName)
         )
+    }
+
+    private fun copyRuntimeAsset(fileName: String): Path {
+        val target = DesktopPaths.appDataDir().resolve("bin").resolve(fileName)
+        Files.createDirectories(target.parent)
+        val resourceName = "native/$fileName"
+        val resource = javaClass.classLoader.getResourceAsStream(resourceName)
+        if (resource != null) {
+            resource.use {
+                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+            return target
+        }
+
+        Path("desktopApp").resolve("build").resolve("generated").resolve("desktopNativeResources")
+            .resolve("native").resolve(fileName)
+            .takeIf { it.exists() }
+            ?.let {
+                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+                return target
+            }
+
+        error("Bundled runtime asset is missing: $resourceName")
     }
 
     private fun makeExecutable(path: Path) {

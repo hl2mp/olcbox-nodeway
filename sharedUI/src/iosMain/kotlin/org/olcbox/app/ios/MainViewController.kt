@@ -34,8 +34,6 @@ import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.IosUpdateSettingsStore
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
-import org.olcbox.app.update.isUpdateCheckDue
-import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.IosVpnManager
 import platform.UIKit.UIViewController
 
@@ -131,7 +129,7 @@ private fun IosApp(
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
+                    if (manual || info.isUpdateAvailable) {
                         if (info.isDownloaded(checkedSettings)) {
                             updateOffer = null
                             updateStatusText = "Latest ${info.channel.name.lowercase()} is already downloaded"
@@ -143,6 +141,7 @@ private fun IosApp(
                             updateStatusText = "Olcbox is up to date"
                         }
                     } else {
+                        updateOffer = null
                         updateStatusText = null
                     }
                 },
@@ -158,9 +157,7 @@ private fun IosApp(
         updateSettings = loaded
         dependencies.locationViewModel.loadLocations()
         dependencies.homeViewModel.loadCurrentConfig()
-        if (loaded.isUpdateCheckDue(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
-            checkUpdate(manual = false)
-        }
+        checkUpdate(manual = false)
     }
 
     AppTheme {

@@ -1,4 +1,5 @@
 import Darwin
+import AVFoundation
 import Foundation
 import OlcRtcMobile
 import SharedUI
@@ -58,9 +59,11 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         guard ready else {
             MobileStop()
             endBackgroundTaskIfNeeded()
+            deactivatePlaybackSession()
             return IosBridgeResult(success: false, message: error?.localizedDescription ?? "olcRTC start timed out")
         }
 
+        activatePlaybackSession()
         beginBackgroundTaskIfNeeded()
         return IosBridgeResult(success: true, message: nil)
     }
@@ -70,6 +73,7 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         defer { lock.unlock() }
         MobileStop()
         endBackgroundTaskIfNeeded()
+        deactivatePlaybackSession()
     }
 
     func isRunning() -> Bool {
@@ -192,6 +196,36 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
                 writer?.writeLog(message: "iOS background task unavailable; SOCKS pauses when the app is suspended")
             } else {
                 writer?.writeLog(message: "iOS background task active; SOCKS can continue until the system suspends the app")
+            }
+        }
+    }
+
+    private func activatePlaybackSession() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+            } catch {
+                self.lock.lock()
+                let writer = self.logWriter
+                self.lock.unlock()
+                writer?.writeLog(message: "iOS playback background mode unavailable: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func deactivatePlaybackSession() {
+        DispatchQueue.main.async { [weak self] in
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            } catch {
+                self?.lock.lock()
+                let writer = self?.logWriter
+                self?.lock.unlock()
+                writer?.writeLog(message: "iOS playback session cleanup failed: \(error.localizedDescription)")
             }
         }
     }

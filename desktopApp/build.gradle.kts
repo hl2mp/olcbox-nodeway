@@ -1,6 +1,8 @@
 import org.gradle.internal.os.OperatingSystem
 import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.net.URI
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.compose.compiler)
@@ -26,6 +28,7 @@ val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidA
 val currentBuildOs = OperatingSystem.current()
 val desktopPackageName = "Olcbox"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
+val WINTUN_VERSION = "0.14.1"
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
     currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
@@ -240,6 +243,82 @@ if (currentBuildOs.isLinux) {
     }
     desktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
     hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
+}
+
+if (currentBuildOs.isWindows) {
+    val hevSocks5TunnelWindowsOutput = generatedNativeResources.map {
+        it.file("native/hev-socks5-tunnel-windows-amd64.exe")
+    }
+    val msysRuntimeWindowsOutput = generatedNativeResources.map {
+        it.file("native/msys-2.0.dll")
+    }
+    val wintunWindowsOutput = generatedNativeResources.map {
+        it.file("native/wintun.dll")
+    }
+
+    val buildHevSocks5TunnelWindows = tasks.register<Exec>("buildHevSocks5TunnelWindows") {
+        outputs.files(hevSocks5TunnelWindowsOutput, msysRuntimeWindowsOutput)
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine(
+            "bash",
+            "-lc",
+            """
+            set -eu
+            source_dir=${shellQuote(hevSocks5TunnelSourceDir.asFile.absolutePath)}
+            output_file=${shellQuote(hevSocks5TunnelWindowsOutput.get().asFile.absolutePath)}
+            msys_runtime=${shellQuote(msysRuntimeWindowsOutput.get().asFile.absolutePath)}
+            source_dir="${'$'}(cygpath -u "${'$'}source_dir")"
+            output_file="${'$'}(cygpath -u "${'$'}output_file")"
+            msys_runtime="${'$'}(cygpath -u "${'$'}msys_runtime")"
+            mkdir -p "${'$'}(dirname "${'$'}output_file")"
+            cd "${'$'}source_dir"
+            make clean exec
+            if [ -f bin/hev-socks5-tunnel.exe ]; then
+              install -m 0755 bin/hev-socks5-tunnel.exe "${'$'}output_file"
+            else
+              install -m 0755 bin/hev-socks5-tunnel "${'$'}output_file"
+            fi
+            cp /usr/bin/msys-2.0.dll "${'$'}msys_runtime"
+            """.trimIndent()
+        )
+    }
+
+    val downloadWintunWindowsAmd64 = tasks.register("downloadWintunWindowsAmd64") {
+        val zipFile = layout.buildDirectory.file("tmp/wintun/wintun-$WINTUN_VERSION.zip")
+        outputs.file(wintunWindowsOutput)
+
+        doLast {
+            val zip = zipFile.get().asFile
+            val output = wintunWindowsOutput.get().asFile
+            zip.parentFile.mkdirs()
+            output.parentFile.mkdirs()
+
+            URI("https://www.wintun.net/builds/wintun-$WINTUN_VERSION.zip")
+                .toURL()
+                .openStream()
+                .use { input ->
+                    zip.outputStream().use { outputStream ->
+                        input.copyTo(outputStream)
+                    }
+                }
+
+            ZipFile(zip).use { archive ->
+                val entry = archive.entries().asSequence()
+                    .firstOrNull { it.name.endsWith("/bin/amd64/wintun.dll") }
+                    ?: error("wintun.dll amd64 entry was not found in ${zip.absolutePath}")
+                archive.getInputStream(entry).use { input ->
+                    output.outputStream().use { outputStream ->
+                        input.copyTo(outputStream)
+                    }
+                }
+            }
+        }
+    }
+
+    desktopNativeAssetTasks.add(buildHevSocks5TunnelWindows)
+    desktopNativeAssetTasks.add(downloadWintunWindowsAmd64)
+    hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelWindows)
+    hostDesktopNativeAssetTasks.add(downloadWintunWindowsAmd64)
 }
 
 tasks.register("buildDesktopNativeAssets") {
