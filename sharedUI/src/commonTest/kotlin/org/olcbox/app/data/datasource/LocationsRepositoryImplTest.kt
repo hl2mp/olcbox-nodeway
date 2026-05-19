@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 class LocationsRepositoryImplTest {
 
     @Test
-    fun exportsAndImportsBundleV4WithActiveLocation() = runTest {
+    fun exportsAndImportsBundleV5WithActiveLocation() = runTest {
         val first = LocationEntry.from(
             "amsterdam",
             LocationConfig("Amsterdam", "room-a", "key-a", LocationConfig.PROVIDER_JAZZ)
@@ -37,9 +37,10 @@ class LocationsRepositoryImplTest {
             )
         )
         val exported = LocationsRepositoryImpl(source).exportBundle()
-        assertTrue("\"version\": 4" in exported)
+        assertTrue("\"version\": 5" in exported)
         assertTrue("\"endpoint\"" in exported)
-        assertTrue("\"carrier\"" in exported)
+        assertTrue("\"auth_provider\"" in exported)
+        assertTrue("\"client_id\"" !in exported)
         assertTrue("\"bypass_provider\"" !in exported)
         val importedSource = FakeLocationsDataSource()
 
@@ -47,7 +48,7 @@ class LocationsRepositoryImplTest {
 
         val imported = importedSource.stored
         assertNotNull(imported)
-        assertEquals(4, imported.version)
+        assertEquals(5, imported.version)
         assertEquals("berlin", imported.activeLocationId)
         assertEquals(listOf("amsterdam", "berlin"), imported.locations.map { it.storageId })
         assertEquals(
@@ -153,7 +154,7 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
-    fun importsOlcRtcUriWithClientIdAndMimoName() = runTest {
+    fun importsLegacyOlcRtcUriWithClientIdAndMimoName() = runTest {
         val source = FakeLocationsDataSource()
         val input = "olcrtc://wbstream?seichannel@room-01#${"a".repeat(64)}%android-01${'$'}RU / olc free sub / IPv6"
 
@@ -166,10 +167,26 @@ class LocationsRepositoryImplTest {
         assertEquals(LocationConfig.PROVIDER_WB_STREAM, location.bypassProvider)
         assertEquals(LocationConfig.TRANSPORT_SEICHANNEL, location.transport)
         assertEquals("room-01", location.id)
-        assertEquals("android-01", location.clientId)
         assertEquals("RU / olc free sub / IPv6", location.name)
         assertEquals("RU / olc free sub / IPv6", entry.metadata?.mimo)
         assertNull(entry.metadata?.subscription)
+    }
+
+    @Test
+    fun importsJitsiOlcRtcUriWithRoomUrl() = runTest {
+        val source = FakeLocationsDataSource()
+        val key = "b".repeat(64)
+        val input = "olcrtc://jitsi?datachannel@https://meet.cryptopro.ru/myroom#$key${'$'}Jitsi room"
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        val location = imported.locations.single().location
+        assertEquals(LocationConfig.PROVIDER_JITSI, location.bypassProvider)
+        assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, location.transport)
+        assertEquals("https://meet.cryptopro.ru/myroom", location.id)
+        assertEquals("Jitsi room", location.name)
     }
 
     @Test
@@ -202,7 +219,10 @@ class LocationsRepositoryImplTest {
         val imported = source.stored
         assertNotNull(imported)
         assertEquals(listOf("RU-1", "DE-Backup"), imported.locations.map { it.location.name })
-        assertEquals(listOf("android-01", "android-02"), imported.locations.map { it.location.clientId })
+        assertEquals(
+            listOf(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.PROVIDER_JAZZ),
+            imported.locations.map { it.location.bypassProvider }
+        )
         assertEquals("imported_ru-1", imported.activeLocationId)
 
         val firstMetadata = imported.locations[0].metadata
@@ -378,13 +398,13 @@ class LocationsRepositoryImplTest {
         val imported = source.stored
         assertNotNull(imported)
         val location = imported.locations.first().location
-        assertEquals(4, imported.version)
+        assertEquals(5, imported.version)
         assertEquals(LocationConfig.PROVIDER_TELEMOST, location.bypassProvider)
         assertEquals(LocationConfig.TRANSPORT_VP8CHANNEL, location.transport)
     }
 
     @Test
-    fun exposesAllWorkingCarrierTransportPairs() {
+    fun exposesAllWorkingProviderTransportPairs() {
         assertEquals(
             listOf(
                 LocationConfig.TRANSPORT_VP8CHANNEL,
@@ -404,6 +424,14 @@ class LocationsRepositoryImplTest {
             LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ),
             LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_WB_STREAM)
         )
+        assertEquals(
+            listOf(LocationConfig.TRANSPORT_DATACHANNEL),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JITSI)
+        )
+        assertEquals(
+            LocationConfig.TRANSPORT_DATACHANNEL,
+            LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_VP8CHANNEL, LocationConfig.PROVIDER_JITSI)
+        )
     }
 
     @Test
@@ -421,7 +449,7 @@ class LocationsRepositoryImplTest {
         )
 
         LocationsRepositoryImpl(source).importText(
-            "olcrtc://wbstream?seichannel@room-01#${"b".repeat(64)}%desktop${'$'}New"
+            "olcrtc://wbstream?seichannel@room-01#${"b".repeat(64)}${'$'}New"
         )
 
         val imported = source.stored
@@ -482,7 +510,7 @@ class LocationsRepositoryImplTest {
             userAgent = request.headers[HttpHeaders.UserAgent]
             hwid = request.headers["x-hwid"]
             respond(
-                content = "olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}%phone${'$'}Sub",
+                content = "olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub",
                 headers = headersOf("profile-update-interval", "6")
             )
         }
@@ -513,7 +541,7 @@ class LocationsRepositoryImplTest {
                 respond("<html>blocked</html>")
             } else {
                 respond(
-                    content = "\uFEFFolcrtc://wbstream?vp8channel@room#${"d".repeat(64)}%phone${'$'}Fallback",
+                    content = "\uFEFFolcrtc://wbstream?vp8channel@room#${"d".repeat(64)}${'$'}Fallback",
                     headers = headersOf("profile-update-interval", "12")
                 )
             }
@@ -559,7 +587,7 @@ class LocationsRepositoryImplTest {
             )
         )
         val engine = MockEngine { request ->
-            respond("olcrtc://wbstream?vp8channel@room-alpha-new#${"c".repeat(64)}%phone${'$'}Alpha")
+            respond("olcrtc://wbstream?vp8channel@room-alpha-new#${"c".repeat(64)}${'$'}Alpha")
         }
 
         val updated = LocationsRepositoryImpl(
@@ -623,7 +651,10 @@ class LocationsRepositoryImplTest {
             vp8Batch = 32
         )
 
-        LocationsRepositoryImpl(source).importText(ConfigShareService.olcRtcUri(config))
+        val shared = ConfigShareService.olcRtcUri(config)
+        assertTrue("%" !in shared)
+
+        LocationsRepositoryImpl(source).importText(shared)
 
         val imported = source.stored
         assertNotNull(imported)

@@ -1,6 +1,18 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.gradle.internal.os.OperatingSystem
 import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.io.File
+import java.net.URI
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.compose.compiler)
@@ -16,8 +28,61 @@ dependencies {
     implementation(libs.zxing.core)
 }
 
+abstract class DownloadFileTask : DefaultTask() {
+    @get:Input
+    abstract val sourceUrl: Property<String>
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun download() {
+        val output = outputFile.get().asFile
+        output.parentFile.mkdirs()
+        URI(sourceUrl.get())
+            .toURL()
+            .openStream()
+            .use { input ->
+                output.outputStream().use { outputStream ->
+                    input.copyTo(outputStream)
+                }
+            }
+    }
+}
+
+abstract class ExtractZipEntryTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val zipFile: RegularFileProperty
+
+    @get:Input
+    abstract val entrySuffix: Property<String>
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun extract() {
+        val zip = zipFile.get().asFile
+        val output = outputFile.get().asFile
+        output.parentFile.mkdirs()
+
+        ZipFile(zip).use { archive ->
+            val entry = archive.entries().asSequence()
+                .firstOrNull { it.name.endsWith(entrySuffix.get()) }
+                ?: error("${entrySuffix.get()} entry was not found in ${zip.absolutePath}")
+
+            archive.getInputStream(entry).use { input ->
+                output.outputStream().use { outputStream ->
+                    input.copyTo(outputStream)
+                }
+            }
+        }
+    }
+}
+
 val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
-    .resolve("olcrtc-original")
+    .resolve("olcrtc")
     .absolutePath
 val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
     .orElse(defaultOlcRtcRepo)
@@ -26,6 +91,7 @@ val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidA
 val currentBuildOs = OperatingSystem.current()
 val desktopPackageName = "Olcbox"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
+val wintunVersion = "0.14.1"
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
     currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
@@ -40,6 +106,27 @@ fun desktopArchName(arch: String): String = when (arch.lowercase()) {
 }
 
 fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
+
+fun windowsMsysCommand(script: String): List<String> {
+    val command = System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }
+        ?: windowsMsysCmdPath()
+    return listOf("cmd.exe", "/D", "/S", "/C", command, "-c", script)
+}
+
+fun windowsMsysCmdPath(): String {
+    System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }?.let { return it }
+
+    val candidates = buildList {
+        System.getenv("RUNNER_TEMP")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { add("$it\\setup-msys2\\msys2.cmd") }
+        add("D:\\a\\_temp\\setup-msys2\\msys2.cmd")
+        add("C:\\msys64\\msys2_shell.cmd")
+    }
+
+    return candidates.firstOrNull { File(it).isFile }
+        ?: candidates.first()
+}
 
 val hostDesktopArch = desktopArchName(System.getProperty("os.arch"))
 
@@ -240,6 +327,61 @@ if (currentBuildOs.isLinux) {
     }
     desktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
     hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
+}
+
+if (currentBuildOs.isWindows) {
+    val hevSocks5TunnelWindowsOutput = generatedNativeResources.map {
+        it.file("native/hev-socks5-tunnel-windows-amd64.exe")
+    }
+    val msysRuntimeWindowsOutput = generatedNativeResources.map {
+        it.file("native/msys-2.0.dll")
+    }
+    val wintunWindowsOutput = generatedNativeResources.map {
+        it.file("native/wintun.dll")
+    }
+
+    val buildHevSocks5TunnelWindows = tasks.register<Exec>("buildHevSocks5TunnelWindows") {
+        outputs.files(hevSocks5TunnelWindowsOutput, msysRuntimeWindowsOutput)
+        workingDir = rootProject.layout.projectDirectory.asFile
+        commandLine(
+            windowsMsysCommand(
+            """
+            set -eu
+            source_dir=${shellQuote(hevSocks5TunnelSourceDir.asFile.absolutePath)}
+            output_file=${shellQuote(hevSocks5TunnelWindowsOutput.get().asFile.absolutePath)}
+            msys_runtime=${shellQuote(msysRuntimeWindowsOutput.get().asFile.absolutePath)}
+            source_dir="${'$'}(cygpath -u "${'$'}source_dir")"
+            output_file="${'$'}(cygpath -u "${'$'}output_file")"
+            msys_runtime="${'$'}(cygpath -u "${'$'}msys_runtime")"
+            mkdir -p "${'$'}(dirname "${'$'}output_file")"
+            cd "${'$'}source_dir"
+            make clean exec
+            if [ -f bin/hev-socks5-tunnel.exe ]; then
+              install -m 0755 bin/hev-socks5-tunnel.exe "${'$'}output_file"
+            else
+              install -m 0755 bin/hev-socks5-tunnel "${'$'}output_file"
+            fi
+            cp /usr/bin/msys-2.0.dll "${'$'}msys_runtime"
+            """.trimIndent()
+            )
+        )
+    }
+
+    val downloadWintunWindowsAmd64 = tasks.register<DownloadFileTask>("downloadWintunWindowsAmd64") {
+        sourceUrl.set("https://www.wintun.net/builds/wintun-$wintunVersion.zip")
+        outputFile.set(layout.buildDirectory.file("tmp/wintun/wintun-$wintunVersion.zip"))
+    }
+
+    val extractWintunWindowsAmd64 = tasks.register<ExtractZipEntryTask>("extractWintunWindowsAmd64") {
+        zipFile.set(downloadWintunWindowsAmd64.flatMap { it.outputFile })
+        entrySuffix.set("/bin/amd64/wintun.dll")
+        outputFile.set(wintunWindowsOutput)
+    }
+
+    desktopNativeAssetTasks.add(buildHevSocks5TunnelWindows)
+    desktopNativeAssetTasks.add(extractWintunWindowsAmd64)
+    hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelWindows)
+    hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
 tasks.register("buildDesktopNativeAssets") {

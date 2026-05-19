@@ -3,13 +3,16 @@ name: Build Olcbox Releases
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, universal-carrier ]
 
 permissions:
   contents: read
 
 env:
   OLCBOX_VERSION_MAJOR_MINOR: "1.0"
+  # Keep release builds on the matching olcrtc ref until the universal carrier
+  # changes land in olcrtc master.
+  OLCBOX_OLCRTC_REF: "refactor/universal-carrier"
   # The alananisimov/olcbox workflow was recreated after 1.0.69, so
   # github.run_number restarted. Run #6 must publish Android versionCode 70.
   OLCBOX_RELEASE_RUN_NUMBER_BASE: "5"
@@ -21,6 +24,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_code: ${{ steps.version.outputs.version_code }}
+      olcrtc_ref: ${{ steps.version.outputs.olcrtc_ref }}
+      nightly_tag: ${{ steps.version.outputs.nightly_tag }}
+      nightly_title: ${{ steps.version.outputs.nightly_title }}
 
     steps:
       - name: Resolve release version
@@ -35,6 +41,16 @@ jobs:
 
           echo "version=${OLCBOX_VERSION_MAJOR_MINOR}.${patch}" >> "$GITHUB_OUTPUT"
           echo "version_code=${patch}" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_NAME}" = "universal-carrier" ]; then
+            echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
+            echo "nightly_tag=nightly-universal-carrier" >> "$GITHUB_OUTPUT"
+            echo "nightly_title=Nightly Olcbox universal-carrier builds" >> "$GITHUB_OUTPUT"
+          else
+            echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
+            echo "nightly_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "nightly_title=Nightly Olcbox builds" >> "$GITHUB_OUTPUT"
+          fi
 
   build-windows:
     needs: release_version
@@ -58,7 +74,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openlibrecommunity/olcrtc
-          ref: master
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
 
@@ -75,9 +91,22 @@ jobs:
           go-version: 'stable'
           cache-dependency-path: olcrtc/go.sum
 
+      - name: Setup MSYS2 for Windows TUN helper
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          update: true
+          path-type: inherit
+          install: >-
+            base-devel
+            gcc
+            make
+
       - name: Build Windows installers and portable zip
         shell: pwsh
         working-directory: olcbox
+        env:
+          MSYS2_CMD: ${{ runner.temp }}\setup-msys2\msys2.cmd
         run: |
           $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
           .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" :desktopApp:packageReleaseExe :desktopApp:packageReleaseMsi :desktopApp:packageReleasePortableZip --stacktrace
@@ -194,7 +223,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openlibrecommunity/olcrtc
-          ref: master
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
 
@@ -247,7 +276,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openlibrecommunity/olcrtc
-          ref: master
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
 
@@ -319,7 +348,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openlibrecommunity/olcrtc
-          ref: master
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
 
@@ -398,6 +427,94 @@ jobs:
           name: Olcbox-android-apk
           path: olcbox/dist/Olcbox-*-android-release.apk
 
+  build-ios:
+    needs: release_version
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
+
+    steps:
+      - name: Checkout olcbox
+        uses: actions/checkout@v6
+        with:
+          path: olcbox
+
+      - name: Checkout olcrtc
+        uses: actions/checkout@v6
+        with:
+          repository: openlibrecommunity/olcrtc
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
+          path: olcrtc
+          submodules: recursive
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Go mobile tooling
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+
+      - name: Initialize gomobile
+        working-directory: olcrtc
+        run: |
+          gomobile init
+
+      - name: Build unsigned iOS app
+        working-directory: olcbox
+        run: |
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build/ios-ipa/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: olcbox
+        run: |
+          app_path="build/ios-ipa/DerivedData/Build/Products/Release-iphoneos/iosApp.app"
+          if [ ! -d "$app_path" ]; then
+            echo "iOS app product was not found at $app_path" >&2
+            exit 1
+          fi
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${OLCBOX_VERSION}" "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${OLCBOX_VERSION_CODE}" "$app_path/Info.plist"
+
+          rm -rf build/ios-ipa/package
+          mkdir -p build/ios-ipa/package/Payload dist
+          cp -R "$app_path" build/ios-ipa/package/Payload/
+          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/Olcbox-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+          unzip -t "dist/Olcbox-${OLCBOX_VERSION}-ios-unsigned.ipa"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Olcbox-ios-unsigned-ipa
+          path: olcbox/dist/Olcbox-*-ios-unsigned.ipa
+
   publish-nightly:
     runs-on: ubuntu-latest
     permissions:
@@ -410,9 +527,16 @@ jobs:
       - build-macos
       - build-linux
       - build-android
+      - build-ios
+    concurrency:
+      group: publish-${{ github.repository }}-${{ needs.release_version.outputs.nightly_tag }}
+      cancel-in-progress: false
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
+      OLCBOX_OLCRTC_REF: ${{ needs.release_version.outputs.olcrtc_ref }}
+      OLCBOX_NIGHTLY_TAG: ${{ needs.release_version.outputs.nightly_tag }}
+      OLCBOX_NIGHTLY_TITLE: ${{ needs.release_version.outputs.nightly_title }}
 
     steps:
       - name: Checkout olcbox
@@ -437,10 +561,11 @@ jobs:
           fi
 
           {
-            echo "Latest desktop and Android builds from public GitHub Actions CI."
+            echo "Latest desktop, Android, and iOS builds from public GitHub Actions CI."
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Source branch: \`${GITHUB_REF_NAME}\`"
+            echo "- olcrtc branch: \`${OLCBOX_OLCRTC_REF}\`"
             echo "- App version: \`${OLCBOX_VERSION}\`"
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
             echo "- Workflow: \`.github/workflows/release.yml\`"
@@ -469,15 +594,38 @@ jobs:
             exit 1
           fi
 
-          if gh release view nightly >/dev/null 2>&1; then
-            gh release delete nightly --yes --cleanup-tag
+          if gh release view "$OLCBOX_NIGHTLY_TAG" >/dev/null 2>&1; then
+            gh release delete "$OLCBOX_NIGHTLY_TAG" --yes --cleanup-tag
           fi
 
-          git tag -f nightly "$GITHUB_SHA"
-          git push --force origin refs/tags/nightly
+          git tag -f "$OLCBOX_NIGHTLY_TAG" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$OLCBOX_NIGHTLY_TAG"
 
-          gh release create nightly "${assets[@]}" \
+          gh release create "$OLCBOX_NIGHTLY_TAG" \
             --target "$GITHUB_SHA" \
-            --title "Nightly Olcbox builds" \
+            --title "$OLCBOX_NIGHTLY_TITLE" \
             --notes-file release-notes.md \
-            --prerelease
+            --prerelease \
+            --draft
+
+          # Give GitHub a moment to make the draft release available for asset uploads.
+          sleep 5
+
+          for asset in "${assets[@]}"; do
+            echo "Uploading ${asset}"
+            for attempt in 1 2 3; do
+              if gh release upload "$OLCBOX_NIGHTLY_TAG" "$asset" --clobber; then
+                break
+              fi
+
+              if [ "$attempt" -eq 3 ]; then
+                echo "Failed to upload ${asset} after ${attempt} attempts" >&2
+                exit 1
+              fi
+
+              echo "Upload failed for ${asset}; retrying in 10 seconds" >&2
+              sleep 10
+            done
+          done
+
+          gh release edit "$OLCBOX_NIGHTLY_TAG" --draft=false --prerelease

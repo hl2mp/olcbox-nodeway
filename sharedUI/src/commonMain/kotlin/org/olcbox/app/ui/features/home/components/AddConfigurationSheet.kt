@@ -106,7 +106,7 @@ fun AddConfigurationSheet(
 
                 AddSheetAction(
                     title = "Create custom location",
-                    value = "Enter room, key, carrier, and transport",
+                        value = "Enter room, key, provider, and transport",
                     icon = Icons.Outlined.Add,
                     onClick = onAddCustomLocationClick
                 )

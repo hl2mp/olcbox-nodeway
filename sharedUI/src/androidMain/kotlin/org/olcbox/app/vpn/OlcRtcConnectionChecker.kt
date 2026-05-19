@@ -8,7 +8,7 @@ import org.olcbox.app.data.model.LocationConfig
 import java.net.ServerSocket
 
 internal object OlcRtcConnectionChecker {
-    suspend fun check(locationConfig: LocationConfig): Long? {
+    suspend fun check(locationConfig: LocationConfig, deviceId: String): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
@@ -21,7 +21,7 @@ internal object OlcRtcConnectionChecker {
                         config.bypassProvider,
                         config.transport,
                         config.id,
-                        config.clientId,
+                        deviceId,
                         config.key,
                         socksPort.toLong(),
                         CONNECTION_CHECK_TIMEOUT_MS,
@@ -39,7 +39,7 @@ internal object OlcRtcConnectionChecker {
         }
     }
 
-    suspend fun ping(locationConfig: LocationConfig): Long? {
+    suspend fun ping(locationConfig: LocationConfig, deviceId: String): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
@@ -52,7 +52,7 @@ internal object OlcRtcConnectionChecker {
                         config.bypassProvider,
                         config.transport,
                         config.id,
-                        config.clientId,
+                        deviceId,
                         config.key,
                         socksPort.toLong(),
                         HTTP_PING_TIMEOUT_MS,

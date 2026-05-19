@@ -27,11 +27,14 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MeetingRoom
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,11 +48,14 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -109,7 +115,6 @@ fun LocationSettingsScreen(
     val config = viewModel.editingConfig
     val name = viewModel.editingName
     val isSaving = viewModel.isSaving
-    val focusManager = LocalFocusManager.current
     val normalizedTransport = LocationConfig.normalizeTransport(
         config.transport,
         config.bypassProvider
@@ -178,20 +183,33 @@ fun LocationSettingsScreen(
             }
 
             item {
-                CarrierPicker(
+                ConnectionTypePicker(
                     selectedProvider = config.bypassProvider,
+                    serviceProvider = viewModel.editingServiceProvider,
                     enabled = !isSaving,
                     onProviderSelected = viewModel::onBypassProviderChanged
                 )
             }
 
-            item {
-                TransportPicker(
-                    selectedProvider = config.bypassProvider,
-                    selectedTransport = config.transport,
-                    enabled = !isSaving,
-                    onTransportSelected = viewModel::onTransportChanged
-                )
+            if (!isJitsiProvider(config.bypassProvider)) {
+                item {
+                    ProviderPicker(
+                        selectedProvider = config.bypassProvider,
+                        enabled = !isSaving,
+                        onProviderSelected = viewModel::onBypassProviderChanged
+                    )
+                }
+            }
+
+            if (LocationConfig.supportedTransportsForProvider(config.bypassProvider).size > 1) {
+                item {
+                    TransportPicker(
+                        selectedProvider = config.bypassProvider,
+                        selectedTransport = config.transport,
+                        enabled = !isSaving,
+                        onTransportSelected = viewModel::onTransportChanged
+                    )
+                }
             }
 
             if (normalizedTransport == LocationConfig.TRANSPORT_VP8CHANNEL) {
@@ -210,14 +228,17 @@ fun LocationSettingsScreen(
                 SettingsTextField(
                     value = config.id,
                     onValueChange = viewModel::onServerChanged,
-                    label = "Room ID",
+                    label = roomIdLabel(config.bypassProvider),
                     placeholder = roomIdPlaceholder(config.bypassProvider),
                     enabled = !isSaving,
                     isError = viewModel.serverError != null,
                     supportingText = viewModel.serverError,
                     leadingIcon = Icons.Rounded.MeetingRoom,
                     onClear = { viewModel.onServerChanged("") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = roomKeyboardType(config.bypassProvider),
+                        imeAction = ImeAction.Next
+                    )
                 )
             }
 
@@ -233,25 +254,7 @@ fun LocationSettingsScreen(
                     leadingIcon = Icons.Rounded.Key,
                     onClear = { viewModel.onPasswordChanged("") },
                     visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
-                )
-            }
-
-            item {
-                SettingsTextField(
-                    value = config.clientId,
-                    onValueChange = viewModel::onClientIdChanged,
-                    label = "Client ID",
-                    placeholder = "android-01",
-                    enabled = !isSaving,
-                    isError = viewModel.clientIdError != null,
-                    supportingText = viewModel.clientIdError,
-                    leadingIcon = Icons.Rounded.Person,
-                    onClear = { viewModel.onClientIdChanged("") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(
-                        onDone = { focusManager.clearFocus() }
-                    )
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
                 )
             }
 
@@ -288,37 +291,49 @@ private fun SectionTitle(
 }
 
 @Composable
-private fun CarrierPicker(
+private fun ConnectionTypePicker(
     selectedProvider: String,
+    serviceProvider: String,
     enabled: Boolean,
     onProviderSelected: (String) -> Unit
 ) {
-    val selected = LocationConfig.normalizeProvider(selectedProvider)
-    val options = LocationConfig.supportedBypassProviders
+    val normalizedProvider = LocationConfig.normalizeProvider(selectedProvider)
+    val selectedIsJitsi = isJitsiProvider(normalizedProvider)
+    val normalizedServiceProvider = LocationConfig.normalizeProvider(serviceProvider)
+    val options = listOf(ConnectionType.Service, ConnectionType.Jitsi)
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        SectionTitle(
-            title = "Carrier"
-        )
+        SectionTitle(title = "Connection type")
 
         SingleChoiceSegmentedButtonRow(
             modifier = Modifier.fillMaxWidth()
         ) {
-            options.forEachIndexed { index, provider ->
+            options.forEachIndexed { index, type ->
+                val selected = when (type) {
+                    ConnectionType.Service -> !selectedIsJitsi
+                    ConnectionType.Jitsi -> selectedIsJitsi
+                }
                 SegmentedButton(
                     shape = SegmentedButtonDefaults.itemShape(
                         index = index,
                         count = options.size
                     ),
-                    selected = selected == provider,
-                    onClick = { onProviderSelected(provider) },
+                    selected = selected,
+                    onClick = {
+                        onProviderSelected(
+                            when (type) {
+                                ConnectionType.Service -> normalizedServiceProvider
+                                ConnectionType.Jitsi -> LocationConfig.PROVIDER_JITSI
+                            }
+                        )
+                    },
                     enabled = enabled,
                     label = {
                         Text(
-                            text = LocationConfig.providerDisplayName(provider),
+                            text = type.label,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -327,6 +342,26 @@ private fun CarrierPicker(
             }
         }
     }
+}
+
+@Composable
+private fun ProviderPicker(
+    selectedProvider: String,
+    enabled: Boolean,
+    onProviderSelected: (String) -> Unit
+) {
+    val selected = LocationConfig.normalizeProvider(selectedProvider)
+    val options = LocationConfig.supportedBypassProviders
+        .filterNot { it == LocationConfig.PROVIDER_JITSI }
+
+    SettingsDropdown(
+        label = "Service",
+        selectedValue = selected,
+        options = options,
+        enabled = enabled,
+        onValueSelected = onProviderSelected,
+        valueLabel = LocationConfig::providerDisplayName
+    )
 }
 
 @Composable
@@ -340,33 +375,67 @@ private fun TransportPicker(
     val selected = LocationConfig.normalizeTransport(selectedTransport, provider)
     val options = LocationConfig.supportedTransportsForProvider(provider)
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    SettingsDropdown(
+        label = "Transport",
+        selectedValue = selected,
+        options = options,
+        enabled = enabled,
+        onValueSelected = onTransportSelected,
+        valueLabel = LocationConfig::transportDisplayName
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsDropdown(
+    label: String,
+    selectedValue: String,
+    options: List<String>,
+    enabled: Boolean,
+    onValueSelected: (String) -> Unit,
+    valueLabel: (String) -> String
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val canExpand = enabled && options.size > 1
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (canExpand) expanded = it },
+        modifier = Modifier.fillMaxWidth()
     ) {
-        SectionTitle(
-            title = "Transport"
+        OutlinedTextField(
+            value = valueLabel(selectedValue),
+            onValueChange = {},
+            label = { Text(label) },
+            enabled = enabled,
+            readOnly = true,
+            singleLine = true,
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, canExpand)
+                .fillMaxWidth()
         )
 
-        SingleChoiceSegmentedButtonRow(
-            modifier = Modifier.fillMaxWidth()
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
         ) {
-            options.forEachIndexed { index, transport ->
-                SegmentedButton(
-                    shape = SegmentedButtonDefaults.itemShape(
-                        index = index,
-                        count = options.size
-                    ),
-                    selected = selected == transport,
-                    onClick = { onTransportSelected(transport) },
-                    enabled = enabled,
-                    label = {
-                        Text(
-                            text = LocationConfig.transportDisplayName(transport),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(valueLabel(option)) },
+                    onClick = {
+                        onValueSelected(option)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (option == selectedValue) {
+                            Icon(Icons.Rounded.Check, contentDescription = null)
+                        }
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                 )
             }
         }
@@ -528,6 +597,24 @@ private fun roomIdPlaceholder(provider: String): String {
         LocationConfig.PROVIDER_TELEMOST -> "12345678901234"
         LocationConfig.PROVIDER_JAZZ -> "room id or any"
         LocationConfig.PROVIDER_WB_STREAM -> "123e4567-e89b-12d3-a456-426614174000"
+        LocationConfig.PROVIDER_JITSI -> "https://meet.example.com/room"
         else -> "room id"
     }
+}
+
+private fun roomIdLabel(provider: String): String {
+    return if (isJitsiProvider(provider)) "Room URL" else "Room ID"
+}
+
+private fun roomKeyboardType(provider: String): KeyboardType {
+    return if (isJitsiProvider(provider)) KeyboardType.Uri else KeyboardType.Text
+}
+
+private fun isJitsiProvider(provider: String): Boolean {
+    return LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_JITSI
+}
+
+private enum class ConnectionType(val label: String) {
+    Service("Service"),
+    Jitsi("Jitsi")
 }

@@ -17,10 +17,12 @@ plugins {
 }
 
 val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
-    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc-original").absolutePath)
+    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc").absolutePath)
 val olcrtcRepoDir = file(olcrtcRepoPath.get())
 val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
 val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
+val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")
+val olcrtcIosXcframeworkDir = olcrtcIosXcframework.get().asFile
 val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionValue = olcboxVersion.get()
 val generatedAppInfoDir = layout.buildDirectory.dir("generated/source/olcboxAppInfo/commonMain")
@@ -65,7 +67,7 @@ val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
     commandLine(
         "gomobile",
         "bind",
-        "-target=android",
+        "-target=android/arm,android/arm64,android/amd64",
         "-androidapi",
         "21",
         "-ldflags",
@@ -77,6 +79,34 @@ val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
 }
 
 val olcrtcAndroidAarDependency = files(olcrtcAndroidAarFile).builtBy(buildOlcrtcAndroidAar)
+
+val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds olcrtc iOS XCFramework from OLCRTC_REPO using gomobile."
+
+    inputs.dir(olcrtcRepoDir.resolve("mobile"))
+    inputs.dir(olcrtcRepoDir.resolve("internal"))
+    inputs.files(olcrtcRepoDir.resolve("go.mod"), olcrtcRepoDir.resolve("go.sum"))
+    outputs.dir(olcrtcIosXcframework)
+
+    workingDir = olcrtcRepoDir
+
+    doFirst {
+        delete(olcrtcIosXcframeworkDir)
+        olcrtcIosXcframeworkDir.parentFile.mkdirs()
+    }
+
+    commandLine(
+        "gomobile",
+        "bind",
+        "-target=ios",
+        "-ldflags",
+        "-s -w -checklinkname=0",
+        "-o",
+        olcrtcIosXcframeworkDir.absolutePath,
+        "./mobile"
+    )
+}
 
 val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
     version.set(olcboxVersionValue)

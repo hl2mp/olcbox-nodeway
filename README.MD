@@ -36,7 +36,7 @@ The author does not support or encourage such use.
 ## Features
 - One-tap tunnel start/stop with live relay status.
 - Saved connection profiles with active location selection.
-- Carriers: Jazz, Telemost, WB Stream.
+- Providers: Jazz, Telemost, WB Stream, Jitsi.
 - Transports: DataChannel, VP8, SEI.
 - VP8 tuning: FPS and batch size.
 - Connectivity checks for individual locations.
@@ -50,8 +50,9 @@ The author does not support or encourage such use.
 | Platform | Modes | Runtime |
 | --- | --- | --- |
 | Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
+| iOS | Proxy | local `olcrtc` SOCKS5 hosted by a Swift shell |
 | macOS | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
-| Windows | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
+| Windows | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, Wintun |
 | Linux | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, policy routes |
 
 ## Requirements
@@ -62,11 +63,12 @@ The author does not support or encourage such use.
 | Android | Android Studio, Android SDK, Android NDK |
 | Desktop native assets | Go and local `olcrtc` fork |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
+| Windows TUN | Administrator launch rights and bundled Wintun runtime |
 
 Default local `olcrtc` path:
 
 ```text
-../olcrtc-original
+../olcrtc
 ```
 
 Override it with `OLCRTC_REPO`:
@@ -86,6 +88,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | --- | --- |
 | Android debug APK | `./gradlew :androidApp:assembleDebug` |
 | Install Android debug APK | `./gradlew :androidApp:installDebug` |
+| iOS simulator app | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` |
 | Run desktop app | `./gradlew :desktopApp:run` |
 | Run desktop app with hot reload | `./gradlew :desktopApp:hotRun --auto` |
 | Build desktop native assets | `./gradlew :desktopApp:buildDesktopNativeAssets` |
@@ -99,6 +102,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | --- | --- | --- |
 | Android debug | `./gradlew :androidApp:assembleDebug` | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` |
 | Android release | `./gradlew :androidApp:assembleRelease` | `androidApp/build/outputs/apk/release/androidApp-release.apk` |
+| iOS simulator | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` | Xcode DerivedData app product |
 | macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/Olcbox-1.0.0.dmg` |
 | Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\Olcbox-1.0.0.exe` |
 | Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\Olcbox-1.0.0.msi` |
@@ -114,10 +118,12 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Windows `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-windows-amd64.exe` |
 | Linux `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-amd64` |
 | Linux `hev-socks5-tunnel` ARM | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-arm64` |
+| Windows `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-windows-amd64.exe` |
+| Windows Wintun runtime | `desktopApp/build/generated/desktopNativeResources/native/wintun.dll` |
 
 ## Notes
 
-- Android native ABIs: `arm64-v8a`, `x86_64`.
+- Android native ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64`.
 - Android release builds require `keystore.properties` in the repository root.
 - macOS DMG output is not notarized unless signing/notarization is configured separately.
 - Windows installers must be built on Windows with `jpackage` and WiX available.

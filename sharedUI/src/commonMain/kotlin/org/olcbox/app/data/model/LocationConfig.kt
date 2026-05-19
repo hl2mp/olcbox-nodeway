@@ -25,9 +25,7 @@ data class LocationConfig(
     @SerialName("vp8_fps")
     val vp8Fps: Int = DEFAULT_VP8_FPS,
     @SerialName("vp8_batch")
-    val vp8Batch: Int = DEFAULT_VP8_BATCH,
-    @SerialName("client_id")
-    val clientId: String = DEFAULT_CLIENT_ID
+    val vp8Batch: Int = DEFAULT_VP8_BATCH
 ) {
     fun normalized(): LocationConfig {
         val provider = normalizeProvider(bypassProvider)
@@ -36,7 +34,6 @@ data class LocationConfig(
             name = name.trim(),
             id = id.trim(),
             key = key.trim(),
-            clientId = clientId.trim().ifBlank { DEFAULT_CLIENT_ID },
             bypassProvider = provider,
             transport = normalizedTransport,
             vp8Fps = sanitizeVp8Fps(vp8Fps),
@@ -56,9 +53,8 @@ data class LocationConfig(
         const val PROVIDER_JAZZ = "jazz"
         const val PROVIDER_TELEMOST = "telemost"
         const val PROVIDER_WB_STREAM = "wbstream"
+        const val PROVIDER_JITSI = "jitsi"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
-
-        const val DEFAULT_CLIENT_ID = "olcbox"
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
         const val TRANSPORT_VP8CHANNEL = "vp8channel"
@@ -71,7 +67,8 @@ data class LocationConfig(
         val supportedBypassProviders = listOf(
             PROVIDER_JAZZ,
             PROVIDER_TELEMOST,
-            PROVIDER_WB_STREAM
+            PROVIDER_WB_STREAM,
+            PROVIDER_JITSI
         )
 
         val supportedTransports = listOf(
@@ -83,6 +80,7 @@ data class LocationConfig(
         fun supportedTransportsForProvider(provider: String): List<String> {
             return when (normalizeProvider(provider)) {
                 PROVIDER_TELEMOST -> listOf(TRANSPORT_VP8CHANNEL, TRANSPORT_SEICHANNEL)
+                PROVIDER_JITSI -> listOf(TRANSPORT_DATACHANNEL)
                 else -> supportedTransports
             }
         }
@@ -92,6 +90,7 @@ data class LocationConfig(
                 PROVIDER_JAZZ, "sberjazz", "sber_jazz" -> PROVIDER_JAZZ
                 PROVIDER_TELEMOST, "yandex", "yandex_telemost" -> PROVIDER_TELEMOST
                 PROVIDER_WB_STREAM, "wbstream", "wb-stream", "wildberries" -> PROVIDER_WB_STREAM
+                PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -103,7 +102,9 @@ data class LocationConfig(
                 TRANSPORT_SEICHANNEL, "sei", "sei_channel", "sei-channel", "h264_sei" -> TRANSPORT_SEICHANNEL
                 else -> DEFAULT_TRANSPORT
             }
-            return normalized.takeIf { it in supportedTransportsForProvider(provider) }
+            val supported = supportedTransportsForProvider(provider)
+            return normalized.takeIf { it in supported }
+                ?: supported.firstOrNull()
                 ?: DEFAULT_TRANSPORT
         }
 
@@ -112,6 +113,7 @@ data class LocationConfig(
                 PROVIDER_JAZZ -> "Jazz"
                 PROVIDER_TELEMOST -> "Telemost"
                 PROVIDER_WB_STREAM -> "WB Stream"
+                PROVIDER_JITSI -> "Jitsi"
                 else -> "WB Stream"
             }
         }
@@ -232,9 +234,9 @@ object LocationTransportConfigSerializer : KSerializer<LocationTransportConfig> 
 data class LocationEndpointConfig(
     @SerialName("room_id")
     val roomId: String = "",
+    val key: String = "",
     @SerialName("client_id")
-    val clientId: String = LocationConfig.DEFAULT_CLIENT_ID,
-    val key: String = ""
+    val legacyClientId: String? = null
 )
 
 @Serializable
@@ -334,7 +336,10 @@ data class LocationEntry(
     @SerialName("subscription_url")
     val subscriptionUrl: String? = null,
     val endpoint: LocationEndpointConfig? = null,
-    val carrier: String? = null,
+    @SerialName("auth_provider")
+    val authProvider: String? = null,
+    @SerialName("carrier")
+    val legacyCarrier: String? = null,
     val transport: LocationTransportConfig? = null,
     val metadata: LocationMetadata? = null,
     @SerialName("subscriptionUrl")
@@ -371,7 +376,8 @@ data class LocationEntry(
     val location: LocationConfig
         get() {
             val provider = firstNotBlank(
-                carrier,
+                authProvider,
+                legacyCarrier,
                 legacyBypassProvider,
                 legacyBypassProviderCamel,
                 legacyProvider
@@ -381,12 +387,6 @@ data class LocationEntry(
             return LocationConfig(
                 name = name,
                 id = firstNotBlank(endpoint?.roomId, legacyId, legacyRoomId, legacyServer),
-                clientId = firstNotBlank(
-                    endpoint?.clientId,
-                    legacyClientId,
-                    legacyClientIdCamel,
-                    LocationConfig.DEFAULT_CLIENT_ID
-                ),
                 key = firstNotBlank(endpoint?.key, legacyKey, legacyPassword),
                 bypassProvider = provider,
                 transport = transportConfig.type,
@@ -412,10 +412,9 @@ data class LocationEntry(
             subscriptionUrl = firstNotBlank(subscriptionUrl, legacySubscriptionUrl).ifBlank { null },
             endpoint = LocationEndpointConfig(
                 roomId = config.id,
-                clientId = config.clientId,
                 key = config.key
             ),
-            carrier = config.bypassProvider,
+            authProvider = config.bypassProvider,
             transport = LocationTransportConfig.from(config),
             metadata = metadata
                 ?.normalized()
@@ -437,10 +436,9 @@ data class LocationEntry(
                 subscriptionUrl = subscriptionUrl,
                 endpoint = LocationEndpointConfig(
                     roomId = config.id,
-                    clientId = config.clientId,
                     key = config.key
                 ),
-                carrier = config.bypassProvider,
+                authProvider = config.bypassProvider,
                 transport = LocationTransportConfig.from(config),
                 metadata = metadata
             ).normalized()
@@ -458,7 +456,7 @@ private fun String?.cleanMetadataValue(): String? {
 
 @Serializable
 data class LocationBundleV4(
-    val version: Int = 4,
+    val version: Int = 5,
     @SerialName("active_location_id")
     val activeLocationId: String? = null,
     val locations: List<LocationEntry> = emptyList()
@@ -481,6 +479,6 @@ data class LocationBundleV4(
     }
 
     companion object {
-        const val CURRENT_VERSION = 4
+        const val CURRENT_VERSION = 5
     }
 }

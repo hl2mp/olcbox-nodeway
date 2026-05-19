@@ -24,37 +24,59 @@ class DesktopProxyModeTest {
         val server = PacServer(port = 0)
 
         server.start("127.0.0.1", 10808)
-        server.start("127.0.0.1", 10810)
+        server.start("127.0.0.1", 10810, "user", "pass")
 
         val pac = server.currentPacContent()
-        assertContains(pac, "SOCKS5 127.0.0.1:10810; SOCKS 127.0.0.1:10810")
+        assertContains(pac, "SOCKS5 user:pass@127.0.0.1:10810; SOCKS user:pass@127.0.0.1:10810")
         assertTrue("SOCKS5 127.0.0.1:10808" !in pac)
 
         server.stop()
     }
 
     @Test
+    fun pacEscapesSocksCredentialsInUserInfo() {
+        val pac = PacServer.generatePac(
+            socksHost = "127.0.0.1",
+            socksPort = 10808,
+            socksUsername = "user name",
+            socksPassword = "p@ss:word"
+        )
+
+        assertContains(
+            pac,
+            "SOCKS5 user%20name:p%40ss%3Aword@127.0.0.1:10808; " +
+                    "SOCKS user%20name:p%40ss%3Aword@127.0.0.1:10808"
+        )
+    }
+
+    @Test
     fun olcRtcCommandUsesLocationProviderRoomAndKey() {
         LocationConfig.supportedBypassProviders.forEach { provider ->
+            val expectedTransport = LocationConfig.normalizeTransport(
+                LocationConfig.DEFAULT_TRANSPORT,
+                provider
+            )
             val command = OlcRtcCommand(
                 binary = Path.of("/tmp/olcrtc"),
                 location = LocationConfig("Test", "room-$provider", "b".repeat(64), provider),
                 socksHost = "127.0.0.1",
                 socksPort = 10808
-            ).args()
+            )
+            val args = command.args(Path.of("/tmp/client.yaml"))
+            val yaml = command.yaml()
 
-            assertEquals("/tmp/olcrtc", command[0])
-            assertEquals(listOf("-mode", "cnc"), command.slice(1..2))
-            assertContains(command, "-transport")
-            assertContains(command, LocationConfig.TRANSPORT_VP8CHANNEL)
-            assertContains(command, "-vp8-fps")
-            assertContains(command, "60")
-            assertContains(command, "-vp8-batch")
-            assertContains(command, "64")
-            assertEquals(OlcRtcCommand.desktopProviderArg(provider), command[command.indexOf("-carrier") + 1])
-            assertEquals(LocationConfig.DEFAULT_CLIENT_ID, command[command.indexOf("-client-id") + 1])
-            assertContains(command, "room-$provider")
-            assertContains(command, "10808")
+            assertEquals(listOf("/tmp/olcrtc", "/tmp/client.yaml"), args)
+            assertContains(yaml, "mode: cnc")
+            assertContains(yaml, "provider: '${OlcRtcCommand.desktopProviderArg(provider)}'")
+            assertContains(yaml, "transport: '$expectedTransport'")
+            assertContains(yaml, "id: 'room-$provider'")
+            assertContains(yaml, "port: 10808")
+            if (expectedTransport == LocationConfig.TRANSPORT_VP8CHANNEL) {
+                assertContains(yaml, "vp8:")
+                assertContains(yaml, "fps: 60")
+                assertContains(yaml, "batch_size: 64")
+            }
+            assertTrue("client-id" !in yaml)
         }
     }
 
@@ -70,11 +92,11 @@ class DesktopProxyModeTest {
                 transport = LocationConfig.TRANSPORT_DATACHANNEL
             ),
             dataDir = Path.of("/tmp/olcbox-data")
-        ).args()
+        ).yaml()
 
-        assertContains(command, LocationConfig.TRANSPORT_DATACHANNEL)
-        assertTrue("-vp8-fps" !in command)
-        assertEquals("/tmp/olcbox-data", command[command.indexOf("-data") + 1])
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_DATACHANNEL}'")
+        assertTrue("vp8:" !in command)
+        assertContains(command, "data: '/tmp/olcbox-data'")
     }
 
     @Test
@@ -88,14 +110,15 @@ class DesktopProxyModeTest {
                 bypassProvider = LocationConfig.PROVIDER_TELEMOST,
                 transport = LocationConfig.TRANSPORT_SEICHANNEL
             )
-        ).args()
+        ).yaml()
 
-        assertContains(command, LocationConfig.TRANSPORT_SEICHANNEL)
-        assertEquals("60", command[command.indexOf("-fps") + 1])
-        assertEquals("64", command[command.indexOf("-batch") + 1])
-        assertEquals("900", command[command.indexOf("-frag") + 1])
-        assertEquals("2000", command[command.indexOf("-ack-ms") + 1])
-        assertTrue("-vp8-fps" !in command)
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_SEICHANNEL}'")
+        assertContains(command, "sei:")
+        assertContains(command, "fps: 60")
+        assertContains(command, "batch_size: 64")
+        assertContains(command, "fragment_size: 900")
+        assertContains(command, "ack_timeout_ms: 2000")
+        assertTrue("vp8:" !in command)
     }
 
     @Test
@@ -138,9 +161,9 @@ class DesktopProxyModeTest {
                     key = "b".repeat(64),
                     bypassProvider = provider
                 )
-            ).args()
+            ).yaml()
 
-            assertEquals("wbstream", command[command.indexOf("-carrier") + 1])
+            assertContains(command, "provider: 'wbstream'")
         }
     }
 
@@ -213,6 +236,19 @@ class DesktopProxyModeTest {
         assertContains(config, "ipv4: 10.0.88.88")
         assertContains(config, "address: 127.0.0.1")
         assertContains(config, "port: 10808")
+        assertContains(config, "udp: 'tcp'")
+        assertContains(config, "mapdns:")
+        assertContains(config, "network: 100.64.0.0")
+    }
+
+    @Test
+    fun windowsTunConfigUsesWintunLocalSocksAndIpv4MapDns() {
+        val config = WindowsTunController.configContent(socksPort = 10812)
+
+        assertContains(config, "name: Olcbox")
+        assertContains(config, "ipv4: 10.0.88.88")
+        assertContains(config, "address: 127.0.0.1")
+        assertContains(config, "port: 10812")
         assertContains(config, "udp: 'tcp'")
         assertContains(config, "mapdns:")
         assertContains(config, "network: 100.64.0.0")

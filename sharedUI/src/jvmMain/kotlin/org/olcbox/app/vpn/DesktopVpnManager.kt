@@ -27,8 +27,11 @@ import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
+import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
@@ -64,8 +67,10 @@ class DesktopVpnManager private constructor(
     private var tunLogJob: Job? = null
     private var process: Process? = null
     private var tunProcess: Process? = null
+    private var olcRtcConfigPath: Path? = null
     private var generation = 0L
     private val linuxTunController = LinuxTunController(::addLog)
+    private val windowsTunController = WindowsTunController(::addLog)
 
     override fun needsPermission(): Boolean = false
 
@@ -104,11 +109,17 @@ class DesktopVpnManager private constructor(
     }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.ping(locationConfig)
+        return OlcRtcConnectionChecker.ping(
+            locationConfig = locationConfig,
+            deviceId = locationsRepository.getDeviceIdentity()
+        )
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
-        return OlcRtcConnectionChecker.check(locationConfig)
+        return OlcRtcConnectionChecker.check(
+            locationConfig = locationConfig,
+            deviceId = locationsRepository.getDeviceIdentity()
+        )
     }
 
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
@@ -118,13 +129,23 @@ class DesktopVpnManager private constructor(
             password = password
         ).normalized()
         _socksProxySettings.value = settings
-        pacServer.updateSocksTarget(settings.host, settings.port)
+        pacServer.updateSocksTarget(
+            socksHost = settings.host,
+            socksPort = settings.port,
+            socksUsername = settings.username,
+            socksPassword = settings.password
+        )
     }
 
     fun updateSocksProxySettings(settings: DesktopSocksProxySettings) {
         val normalized = settings.normalized()
         _socksProxySettings.value = normalized
-        pacServer.updateSocksTarget(normalized.host, normalized.port)
+        pacServer.updateSocksTarget(
+            socksHost = normalized.host,
+            socksPort = normalized.port,
+            socksUsername = normalized.username,
+            socksPassword = normalized.password
+        )
     }
 
     fun close() {
@@ -153,20 +174,23 @@ class DesktopVpnManager private constructor(
 
         try {
             val ready = CompletableDeferred<Unit>()
-            val useLinuxTun = DesktopPaths.os == DesktopOs.Linux
+            val startupFailure = CompletableDeferred<String>()
+            val desktopMode = DesktopMode.current()
             val socksSettings = _socksProxySettings.value.normalized()
 
             process = startOlcRtcProcessWithFallback(
                 location = location,
                 socksSettings = socksSettings,
                 ready = ready,
+                startupFailure = startupFailure,
                 logOutput = true,
-                privileged = useLinuxTun
+                privileged = desktopMode == DesktopMode.LinuxTun
             )
 
             waitForOlcRtcReady(
                 process = process ?: error("olcRTC process is missing"),
                 ready = ready,
+                startupFailure = startupFailure,
                 socksPort = socksSettings.port,
                 requestGeneration = requestGeneration
             )
@@ -175,27 +199,20 @@ class DesktopVpnManager private constructor(
                 throw CancellationException("Desktop start superseded")
             }
 
-            if (useLinuxTun) {
-                val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
-
-                tunProcess = linuxTunController.start(hevBinary, socksSettings.port)
-
-                if (requestGeneration != generation) {
-                    throw CancellationException("Desktop start superseded")
-                }
-
-                startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
-            } else {
-                pacServer.start(socksSettings.host, socksSettings.port)
-                proxyController.enable(pacServer.url)
-
-                if (requestGeneration != generation) {
-                    throw CancellationException("Desktop start superseded")
-                }
+            when (desktopMode) {
+                DesktopMode.LinuxTun -> startLinuxTun(socksSettings.port, requestGeneration)
+                DesktopMode.WindowsTun -> startWindowsTun(socksSettings.port, requestGeneration)
+                DesktopMode.SystemProxy -> startSystemProxy(socksSettings, requestGeneration)
             }
 
             setStatus(VpnStatus.Connected)
-            addLog(if (useLinuxTun) "Desktop Linux TUN connected" else "Desktop proxy connected")
+            addLog(
+                when (desktopMode) {
+                    DesktopMode.LinuxTun -> "Desktop Linux TUN connected"
+                    DesktopMode.WindowsTun -> "Desktop Windows TUN connected"
+                    DesktopMode.SystemProxy -> "Desktop proxy connected"
+                }
+            )
         } catch (e: Exception) {
             if (e is CancellationException) {
                 addLog("Desktop start cancelled")
@@ -203,28 +220,96 @@ class DesktopVpnManager private constructor(
                 addLog("Desktop start failed: ${e.message}")
             }
 
-            if (DesktopPaths.os == DesktopOs.Linux) {
-                runCatching {
-                    linuxTunController.stop(tunProcess)
-                }.onFailure {
-                    addLog("Linux TUN cleanup failed: ${it.message}")
+            when (DesktopPaths.os) {
+                DesktopOs.Linux -> {
+                    runCatching {
+                        linuxTunController.stop(tunProcess)
+                    }.onFailure {
+                        addLog("Linux TUN cleanup failed: ${it.message}")
+                    }
+                    tunProcess = null
                 }
-
-                tunProcess = null
-            } else {
-                runCatching {
-                    proxyController.restore()
-                }.onFailure {
-                    addLog("Proxy restore failed: ${it.message}")
+                DesktopOs.Windows -> {
+                    runCatching {
+                        windowsTunController.stop(tunProcess)
+                    }.onFailure {
+                        addLog("Windows TUN cleanup failed: ${it.message}")
+                    }
+                    tunProcess = null
+                }
+                DesktopOs.MacOS,
+                DesktopOs.Other -> {
+                    runCatching {
+                        proxyController.restore()
+                    }.onFailure {
+                        addLog("Proxy restore failed: ${it.message}")
+                    }
                 }
             }
 
             pacServer.stop()
             stopProcess(process)
             process = null
+            deleteOlcRtcConfig()
 
             if (e !is CancellationException && requestGeneration == generation) {
                 setStatus(VpnStatus.Error(e.message ?: "Desktop start failed"))
+            }
+        }
+    }
+
+    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long) {
+        val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
+        tunProcess = linuxTunController.start(hevBinary, socksPort)
+
+        if (requestGeneration != generation) {
+            throw CancellationException("Desktop start superseded")
+        }
+
+        startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
+    }
+
+    private suspend fun startWindowsTun(socksPort: Int, requestGeneration: Long) {
+        val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
+        tunProcess = windowsTunController.start(hevBinary, socksPort)
+
+        if (requestGeneration != generation) {
+            throw CancellationException("Desktop start superseded")
+        }
+
+        startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
+    }
+
+    private suspend fun startSystemProxy(
+        socksSettings: DesktopSocksProxySettings,
+        requestGeneration: Long
+    ) {
+        pacServer.start(
+            socksHost = socksSettings.host,
+            socksPort = socksSettings.port,
+            socksUsername = socksSettings.username,
+            socksPassword = socksSettings.password
+        )
+        proxyController.enable(pacServer.url)
+
+        if (requestGeneration != generation) {
+            throw CancellationException("Desktop start superseded")
+        }
+    }
+
+    private enum class DesktopMode {
+        LinuxTun,
+        WindowsTun,
+        SystemProxy;
+
+        companion object {
+            fun current(): DesktopMode {
+                return when (DesktopPaths.os) {
+                    DesktopOs.Linux -> LinuxTun
+                    DesktopOs.Windows -> WindowsTun
+                    DesktopOs.MacOS,
+                    DesktopOs.Other -> SystemProxy
+                }
             }
         }
     }
@@ -233,6 +318,7 @@ class DesktopVpnManager private constructor(
         location: LocationConfig,
         socksSettings: DesktopSocksProxySettings,
         ready: CompletableDeferred<Unit>,
+        startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean
     ): Process {
@@ -246,6 +332,7 @@ class DesktopVpnManager private constructor(
                     location = location,
                     socksSettings = socksSettings,
                     ready = ready,
+                    startupFailure = startupFailure,
                     logOutput = logOutput,
                     privileged = privileged
                 )
@@ -268,19 +355,30 @@ class DesktopVpnManager private constructor(
 
         setStatus(VpnStatus.Stopping)
 
-        if (DesktopPaths.os == DesktopOs.Linux) {
-            runCatching {
-                linuxTunController.stop(tunProcess)
-            }.onFailure {
-                addLog("Linux TUN stop failed: ${it.message}")
+        when (DesktopPaths.os) {
+            DesktopOs.Linux -> {
+                runCatching {
+                    linuxTunController.stop(tunProcess)
+                }.onFailure {
+                    addLog("Linux TUN stop failed: ${it.message}")
+                }
+                tunProcess = null
             }
-
-            tunProcess = null
-        } else {
-            runCatching {
-                proxyController.restore()
-            }.onFailure {
-                addLog("Proxy restore failed: ${it.message}")
+            DesktopOs.Windows -> {
+                runCatching {
+                    windowsTunController.stop(tunProcess)
+                }.onFailure {
+                    addLog("Windows TUN stop failed: ${it.message}")
+                }
+                tunProcess = null
+            }
+            DesktopOs.MacOS,
+            DesktopOs.Other -> {
+                runCatching {
+                    proxyController.restore()
+                }.onFailure {
+                    addLog("Proxy restore failed: ${it.message}")
+                }
             }
         }
 
@@ -288,6 +386,7 @@ class DesktopVpnManager private constructor(
 
         stopProcess(process)
         process = null
+        deleteOlcRtcConfig()
 
         logJob?.cancel()
         logJob = null
@@ -297,7 +396,14 @@ class DesktopVpnManager private constructor(
 
         if (finalStatus) {
             setStatus(VpnStatus.Disconnected)
-            addLog(if (DesktopPaths.os == DesktopOs.Linux) "Desktop Linux TUN stopped" else "Desktop proxy stopped")
+            addLog(
+                when (DesktopPaths.os) {
+                    DesktopOs.Linux -> "Desktop Linux TUN stopped"
+                    DesktopOs.Windows -> "Desktop Windows TUN stopped"
+                    DesktopOs.MacOS,
+                    DesktopOs.Other -> "Desktop proxy stopped"
+                }
+            )
         }
     }
 
@@ -306,13 +412,14 @@ class DesktopVpnManager private constructor(
         location: LocationConfig,
         socksSettings: DesktopSocksProxySettings,
         ready: CompletableDeferred<Unit>,
+        startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean
     ): Process {
         val config = location.normalized()
         val provider = OlcRtcCommand.desktopProviderArg(config.bypassProvider)
         val dataDir = DesktopNativeAssets.resolveOlcRtcDataDir()
-        val command = OlcRtcCommand(
+        val olcRtcCommand = OlcRtcCommand(
             binary = binary,
             location = config,
             socksHost = socksSettings.host,
@@ -320,9 +427,11 @@ class DesktopVpnManager private constructor(
             socksUser = socksSettings.username,
             socksPass = socksSettings.password,
             dataDir = dataDir
-        ).args()
+        )
+        val configPath = writeOlcRtcClientConfig(olcRtcCommand)
+        val command = olcRtcCommand.args(configPath)
 
-        addLog("Starting olcRTC carrier=$provider, transport=${config.transport}, room=${config.id}, port=${socksSettings.port}")
+        addLog("Starting olcRTC provider=$provider, transport=${config.transport}, room=${config.id}, port=${socksSettings.port}")
 
         if (privileged) {
             addLog("Linux TUN mode starts olcRTC with elevated privileges to bypass the TUN route")
@@ -335,7 +444,15 @@ class DesktopVpnManager private constructor(
         processBuilder.environment()["NO_PROXY"] = "127.0.0.1,localhost"
         processBuilder.environment()["no_proxy"] = "127.0.0.1,localhost"
 
-        val startedProcess = processBuilder.start()
+        val startedProcess = try {
+            processBuilder.start()
+        } catch (e: Exception) {
+            runCatching { Files.deleteIfExists(configPath) }
+            if (olcRtcConfigPath == configPath) {
+                olcRtcConfigPath = null
+            }
+            throw e
+        }
 
         val readerJob = scope.launch {
             startedProcess.inputStream.bufferedReader().useLines { lines ->
@@ -349,6 +466,10 @@ class DesktopVpnManager private constructor(
                     if (line.contains("SOCKS5 server listening", ignoreCase = true)) {
                         ready.complete(Unit)
                     }
+
+                    if (isFatalOlcRtcStartupLine(line)) {
+                        startupFailure.complete(line)
+                    }
                 }
             }
         }
@@ -359,6 +480,23 @@ class DesktopVpnManager private constructor(
         }
 
         return startedProcess
+    }
+
+    private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
+        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        Files.createDirectories(runtimeDir)
+        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
+        deleteOlcRtcConfig()
+        olcRtcConfigPath = path
+        return path
+    }
+
+    private fun deleteOlcRtcConfig() {
+        olcRtcConfigPath?.let { path ->
+            runCatching { Files.deleteIfExists(path) }
+        }
+        olcRtcConfigPath = null
     }
 
     private fun startTunLogReader(target: Process) {
@@ -378,6 +516,7 @@ class DesktopVpnManager private constructor(
     private suspend fun waitForOlcRtcReady(
         process: Process,
         ready: CompletableDeferred<Unit>,
+        startupFailure: CompletableDeferred<String>,
         socksPort: Int,
         requestGeneration: Long? = null
     ) {
@@ -388,7 +527,12 @@ class DesktopVpnManager private constructor(
                 throw CancellationException("Desktop start superseded")
             }
 
+            if (startupFailure.isCompleted) {
+                error("olcRTC failed before desktop proxy was enabled: ${startupFailure.await()}")
+            }
+
             if (ready.isCompleted || canConnectToSocks(socksPort)) {
+                waitForOlcRtcStartupStability(process, startupFailure, requestGeneration)
                 return
             }
 
@@ -400,6 +544,29 @@ class DesktopVpnManager private constructor(
         }
 
         error("olcRTC start timed out")
+    }
+
+    private suspend fun waitForOlcRtcStartupStability(
+        process: Process,
+        startupFailure: CompletableDeferred<String>,
+        requestGeneration: Long?
+    ) {
+        val deadline = System.currentTimeMillis() + OLC_STARTUP_STABILITY_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (requestGeneration != null && requestGeneration != generation) {
+                throw CancellationException("Desktop start superseded")
+            }
+
+            if (startupFailure.isCompleted) {
+                error("olcRTC failed before desktop proxy was enabled: ${startupFailure.await()}")
+            }
+
+            if (!process.isAlive) {
+                error("olcRTC exited before desktop proxy was enabled")
+            }
+
+            delay(READY_POLL_INTERVAL_MS)
+        }
     }
 
     private fun canConnectToSocks(port: Int): Boolean {
@@ -447,10 +614,19 @@ class DesktopVpnManager private constructor(
     private companion object {
         const val MAX_LOG_ENTRIES = 5_000
         const val OLC_READY_TIMEOUT_MS = 25_000L
+        const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
+
+        internal fun isFatalOlcRtcStartupLine(line: String): Boolean {
+            val text = line.lowercase()
+            return "failed to connect link" in text ||
+                    "join room failed" in text ||
+                    "get room token" in text && "failed" in text ||
+                    "transport connect" in text && "failed" in text
+        }
     }
 }

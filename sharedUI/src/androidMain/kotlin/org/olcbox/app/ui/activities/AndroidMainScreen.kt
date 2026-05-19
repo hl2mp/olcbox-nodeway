@@ -28,8 +28,6 @@ import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.AndroidUpdateInstaller
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
-import org.olcbox.app.update.isUpdateCheckDue
-import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -182,11 +180,10 @@ fun AndroidMainScreen(
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.shouldShowOffer(checkedSettings, checkedAt)) {
+                    if (manual || info.isUpdateAvailable) {
                         showUpdateResult(info)
-                    } else if (!info.isUpdateAvailable) {
-                        updateStatusText = "Olcbox is up to date"
                     } else {
+                        updateOffer = null
                         updateStatusText = null
                     }
                 },
@@ -241,7 +238,7 @@ fun AndroidMainScreen(
     LaunchedEffect(appUpdateService) {
         val loaded = updateSettingsStore.load()
         updateSettings = loaded
-        if (appUpdateService != null && loaded.isUpdateCheckDue(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
+        if (appUpdateService != null) {
             checkUpdate(manual = false)
         }
     }
