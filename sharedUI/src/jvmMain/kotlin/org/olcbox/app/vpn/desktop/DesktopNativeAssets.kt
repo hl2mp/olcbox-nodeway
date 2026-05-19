@@ -173,13 +173,18 @@ internal object DesktopNativeAssets {
 
     private fun hevSocks5TunnelSourceCandidates(fileName: String): List<Path> {
         val explicitBinary = System.getenv("HEV_SOCKS5_TUNNEL_BINARY")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        return listOfNotNull(
-            explicitBinary,
-            Path("androidApp").resolve("src").resolve("main").resolve("jni").resolve("hev-socks5-tunnel")
-                .resolve("bin").resolve("hev-socks5-tunnel"),
-            Path("desktopApp").resolve("build").resolve("generated").resolve("desktopNativeResources")
-                .resolve("native").resolve(fileName)
-        )
+        return listOfNotNull(explicitBinary) + projectRootCandidates().flatMap { root ->
+            val sourceBin = root.resolve("androidApp").resolve("src").resolve("main")
+                .resolve("jni").resolve("hev-socks5-tunnel").resolve("bin")
+            listOf(
+                root.resolve("desktopApp").resolve("build").resolve("generated")
+                    .resolve("desktopNativeResources").resolve("native").resolve(fileName),
+                root.resolve("build").resolve("generated").resolve("desktopNativeResources")
+                    .resolve("native").resolve(fileName),
+                sourceBin.resolve("hev-socks5-tunnel.exe"),
+                sourceBin.resolve("hev-socks5-tunnel")
+            )
+        }.distinct()
     }
 
     private fun copyRuntimeAsset(fileName: String): Path {
@@ -194,9 +199,8 @@ internal object DesktopNativeAssets {
             return target
         }
 
-        Path("desktopApp").resolve("build").resolve("generated").resolve("desktopNativeResources")
-            .resolve("native").resolve(fileName)
-            .takeIf { it.exists() }
+        desktopNativeResourceCandidates(fileName)
+            .firstOrNull { it.exists() }
             ?.let {
                 Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
                 return target
@@ -209,5 +213,23 @@ internal object DesktopNativeAssets {
         if (DesktopPaths.os != DesktopOs.Windows) {
             path.toFile().setExecutable(true, true)
         }
+    }
+
+    private fun desktopNativeResourceCandidates(fileName: String): List<Path> {
+        return projectRootCandidates().flatMap { root ->
+            listOf(
+                root.resolve("desktopApp").resolve("build").resolve("generated")
+                    .resolve("desktopNativeResources").resolve("native").resolve(fileName),
+                root.resolve("build").resolve("generated").resolve("desktopNativeResources")
+                    .resolve("native").resolve(fileName)
+            )
+        }.distinct()
+    }
+
+    private fun projectRootCandidates(): List<Path> {
+        val cwd = Path("").toAbsolutePath().normalize()
+        return generateSequence(cwd) { it.parent }
+            .take(5)
+            .toList()
     }
 }

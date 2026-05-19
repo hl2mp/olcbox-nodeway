@@ -1,7 +1,10 @@
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
@@ -77,6 +80,28 @@ abstract class ExtractZipEntryTask : DefaultTask() {
                     input.copyTo(outputStream)
                 }
             }
+        }
+    }
+}
+
+abstract class VerifyNativeResourcesTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val resourcesDir: DirectoryProperty
+
+    @get:Input
+    abstract val requiredPaths: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val root = resourcesDir.get().asFile
+        val missing = requiredPaths.get()
+            .map { root.resolve(it) }
+            .filterNot { it.isFile }
+
+        require(missing.isEmpty()) {
+            "Missing desktop native resources:\n" +
+                    missing.joinToString(separator = "\n") { "- ${it.relativeTo(root).invariantSeparatorsPath}" }
         }
     }
 }
@@ -384,8 +409,38 @@ if (currentBuildOs.isWindows) {
     hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
+fun requiredHostNativeResourcePaths(): List<String> = buildList {
+    add("olcrtc-data/names")
+    add("olcrtc-data/surnames")
+    when {
+        currentBuildOs.isMacOsX -> {
+            add("native/olcrtc-darwin-$hostDesktopArch")
+            add("native/libolcrtc-darwin-$hostDesktopArch.dylib")
+        }
+        currentBuildOs.isWindows -> {
+            add("native/olcrtc-windows-amd64.exe")
+            add("native/olcrtc-windows-amd64.dll")
+            add("native/hev-socks5-tunnel-windows-amd64.exe")
+            add("native/msys-2.0.dll")
+            add("native/wintun.dll")
+        }
+        currentBuildOs.isLinux -> {
+            add("native/olcrtc-linux-$hostDesktopArch")
+            add("native/libolcrtc-linux-$hostDesktopArch.so")
+            add("native/hev-socks5-tunnel-linux-$hostDesktopArch")
+        }
+    }
+}
+
+val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("verifyDesktopNativeResources") {
+    dependsOn(hostDesktopNativeAssetTasks.toList())
+    resourcesDir.set(generatedNativeResources)
+    requiredPaths.set(requiredHostNativeResourcePaths())
+}
+
 tasks.register("buildDesktopNativeAssets") {
     dependsOn(desktopNativeAssetTasks)
+    dependsOn(verifyDesktopNativeResources)
 }
 
 sourceSets {
@@ -418,7 +473,22 @@ if (currentBuildOs.isWindows) {
 }
 
 tasks.named("processResources") {
-    dependsOn(hostDesktopNativeAssetTasks)
+    dependsOn(verifyDesktopNativeResources)
+}
+
+listOf(
+    "run",
+    "createReleaseDistributable",
+    "packageReleaseDistributionForCurrentOS",
+    "packageReleaseExe",
+    "packageReleaseMsi",
+    "packageReleaseDmg",
+    "packageReleaseAppImage",
+    "packageReleasePortableZip"
+).forEach { taskName ->
+    tasks.matching { it.name == taskName }.configureEach {
+        dependsOn(verifyDesktopNativeResources)
+    }
 }
 
 compose.desktop {
