@@ -503,7 +503,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${OLCBOX_VERSION}" "$app_path/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${OLCBOX_VERSION_CODE}" "$app_path/Info.plist"
 
-          rm -rf build/ios-ipa/package
+          rm -rf build/ios-ipa/package dist
           mkdir -p build/ios-ipa/package/Payload dist
           cp -R "$app_path" build/ios-ipa/package/Payload/
           (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/Olcbox-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
@@ -513,7 +513,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: Olcbox-ios-unsigned-ipa
-          path: olcbox/dist/Olcbox-*-ios-unsigned.ipa
+          path: olcbox/dist/Olcbox-${{ env.OLCBOX_VERSION }}-ios-unsigned.ipa
 
   publish-nightly:
     runs-on: ubuntu-latest
@@ -541,6 +541,9 @@ jobs:
     steps:
       - name: Checkout olcbox
         uses: actions/checkout@v6
+
+      - name: Clear release staging dir
+        run: rm -rf dist
 
       - name: Download release assets
         uses: actions/download-artifact@v8

@@ -14,6 +14,7 @@ Pods/
 *.jks
 *.gpg
 *yarn.lock
+dist/
 
 # Android build artifacts
 *.apk

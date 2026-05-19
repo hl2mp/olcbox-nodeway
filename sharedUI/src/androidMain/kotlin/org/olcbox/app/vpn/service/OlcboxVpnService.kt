@@ -18,8 +18,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -29,6 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import mobile.LogWriter
 import mobile.Mobile
@@ -221,6 +224,10 @@ class OlcboxVpnService : VpnService() {
         }
 
         applyStartOptions(loadStartOptions(intent))
+        val isRestart = shouldRestartForStartCommand()
+        if (isRestart) {
+            addLog("Restarting ${activeModeLabel()} for selected location")
+        }
         startForeground(
             if (connectionMode == AndroidConnectionMode.Proxy) {
                 "Starting proxy..."
@@ -229,7 +236,7 @@ class OlcboxVpnService : VpnService() {
             }
         )
         refreshWakeLock(force = true)
-        startTunnel(isMigration = false)
+        startTunnel(isMigration = false, isRestart = isRestart)
         return START_REDELIVER_INTENT
     }
 
@@ -330,7 +337,8 @@ class OlcboxVpnService : VpnService() {
 
     private fun startTunnel(
         isMigration: Boolean,
-        forceFullRestart: Boolean = false
+        forceFullRestart: Boolean = false,
+        isRestart: Boolean = false
     ) {
         startupJob?.cancel()
         watchdogJob?.cancel()
@@ -375,7 +383,7 @@ class OlcboxVpnService : VpnService() {
                 if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
                     reconnectTransport(location, requestedGeneration)
                 } else {
-                    startFullTunnel(location, requestedGeneration, isMigration)
+                    startFullTunnel(location, requestedGeneration, isMigration, isRestart)
                 }
             }
         }
@@ -398,7 +406,7 @@ class OlcboxVpnService : VpnService() {
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return
 
-        if (startMobile(location, upstream, setErrorOnFailure = false)) {
+        if (startMobile(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
             setStatus(VpnStatus.Connected)
             recoveryRequestedForGeneration = 0L
             updateNotification(connectedNotificationText())
@@ -415,11 +423,12 @@ class OlcboxVpnService : VpnService() {
     private suspend fun startFullTunnel(
         location: LocationConfig,
         requestedGeneration: Long,
-        isMigration: Boolean
+        isMigration: Boolean,
+        isRestart: Boolean
     ) {
-        setStatus(if (isMigration) VpnStatus.Reconnecting else VpnStatus.Connecting)
+        setStatus(if (isMigration || isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
         updateNotification("Connecting...")
-        stopTransportProcesses(closeTun = true, waitForSocksPort = false)
+        stopTransportProcesses(closeTun = true, waitForSocksPort = true)
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return
 
@@ -437,7 +446,7 @@ class OlcboxVpnService : VpnService() {
         }
         updateUnderlyingNetwork(upstream)
 
-        if (!startMobile(location, upstream, setErrorOnFailure = !isMigration)) {
+        if (!startMobile(location, upstream, requestedGeneration, setErrorOnFailure = !isMigration)) {
             if (isMigration) {
                 updateUnderlyingNetwork(null)
                 setStatus(VpnStatus.Reconnecting)
@@ -491,6 +500,7 @@ class OlcboxVpnService : VpnService() {
     private suspend fun startMobile(
         location: LocationConfig,
         upstream: Network,
+        requestedGeneration: Long,
         setErrorOnFailure: Boolean
     ): Boolean {
         val keepProcessBound = shouldKeepProcessBound(upstream)
@@ -531,12 +541,25 @@ class OlcboxVpnService : VpnService() {
                 addLog("Keeping olcRTC bound to ${getNetName(upstream)}")
             }
             true
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                addLog("olcRTC start canceled")
+                unbindProcessFromNetwork()
+                stopMobileAndWait()
+            }
+            throw e
         } catch (e: Exception) {
-            addLog("olcRTC start failed: ${e.message}")
+            val staleRequest = requestedGeneration != generation
+            val message = e.message ?: "Transport failed"
+            if (staleRequest) {
+                addLog("olcRTC start canceled: $message")
+            } else {
+                addLog("olcRTC start failed: $message")
+            }
             unbindProcessFromNetwork()
             stopMobileAndWait()
-            if (setErrorOnFailure) {
-                setStatus(VpnStatus.Error(e.message ?: "Transport failed"))
+            if (!staleRequest && setErrorOnFailure) {
+                setStatus(VpnStatus.Error(message))
                 updateNotification("Connection failed")
             }
             false
@@ -865,14 +888,20 @@ class OlcboxVpnService : VpnService() {
         waitForSocksPort: Boolean = true,
         stopMobileBeforeTun: Boolean = false
     ) {
+        val tunThread = tun2socksThread
         stopAuthenticatedSocksProxy()
         if (stopMobileBeforeTun) {
             stopMobile()
         }
         stopTun2socks()
         if (closeTun) cleanupVpnInterface()
-        tun2socksThread?.interrupt()
-        tun2socksThread = null
+        tunThread?.interrupt()
+        if (closeTun) {
+            waitForTun2socksStopped(tunThread)
+        }
+        if (tun2socksThread == tunThread) {
+            tun2socksThread = null
+        }
         if (waitForSocksPort) {
             if (stopMobileBeforeTun) {
                 waitForSocksPortReleased()
@@ -1108,6 +1137,23 @@ class OlcboxVpnService : VpnService() {
             AndroidConnectionMode.Tun -> vpnInterface != null && tun2socksThread?.isAlive == true
             AndroidConnectionMode.Proxy -> Mobile.isRunning()
         }
+    }
+
+    private fun shouldRestartForStartCommand(): Boolean {
+        return when (OlcboxVpnState.status.value) {
+            VpnStatus.Connected,
+            VpnStatus.Connecting,
+            VpnStatus.Reconnecting,
+            VpnStatus.Stopping -> true
+            VpnStatus.Disconnected,
+            is VpnStatus.Error -> false
+        } ||
+            startupJob?.isActive == true ||
+            cleanupJob?.isActive == true ||
+            vpnInterface != null ||
+            tun2socksThread != null ||
+            socksProxy != null ||
+            Mobile.isRunning()
     }
 
     private fun registerNetworkMonitor() {
