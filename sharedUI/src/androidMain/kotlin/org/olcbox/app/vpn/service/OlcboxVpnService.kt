@@ -383,11 +383,18 @@ class OlcboxVpnService : VpnService() {
         forceFullRestart: Boolean = false,
         isRestart: Boolean = false
     ) {
-        startupJob?.cancel()
+        val previousStartupJob = startupJob
+        val hadPendingStartup = previousStartupJob?.isActive == true
+        previousStartupJob?.cancel()
         watchdogJob?.cancel()
         networkLossJob?.cancel()
         recoveryJob?.cancel()
         recoveryJob = null
+        if (hadPendingStartup) {
+            addLog("Canceling pending olcRTC start")
+            stopMobile()
+            stopTun2socks()
+        }
         if (!isMigration) {
             resetRecoveryState()
         }
@@ -588,6 +595,11 @@ class OlcboxVpnService : VpnService() {
                 socksPassword
             )
             Mobile.waitReady(MOBILE_READY_TIMEOUT_MS)
+            if (requestedGeneration != generation) {
+                addLog("olcRTC start superseded")
+                return false
+            }
+            coroutineContext.ensureActive()
             addLog("olcRTC ready on 127.0.0.1:$targetSocksPort")
             addLog("username: $socksUsername, password: $socksPassword")
             markRtcConnected()

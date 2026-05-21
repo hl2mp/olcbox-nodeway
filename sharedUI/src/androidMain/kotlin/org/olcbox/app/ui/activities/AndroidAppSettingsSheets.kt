@@ -68,9 +68,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -106,7 +103,6 @@ import kotlinx.coroutines.withContext
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.data.share.SubscriptionShareItem
 import org.olcbox.app.update.AppUpdateSettings
-import org.olcbox.app.update.ReleaseChannel
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidInstalledApp
@@ -137,7 +133,6 @@ internal fun AppSettingsSheet(
     onCopyConfigClick: () -> Unit,
     onSaveLogsClick: () -> Unit,
     onShareLogsClick: () -> Unit,
-    onUpdateChannelSelected: (ReleaseChannel) -> Unit,
     onUpdateIntervalSelected: (Int) -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onSubscriptionShareClick: (String) -> Unit,
@@ -300,7 +295,6 @@ internal fun AppSettingsSheet(
                     statusText = updateStatusText,
                     downloadProgress = updateDownloadProgress,
                     onBack = { route = AppSettingsRoute.Hub },
-                    onChannelSelected = onUpdateChannelSelected,
                     onIntervalSelected = onUpdateIntervalSelected,
                     onCheckUpdatesClick = onCheckUpdatesClick
                 )
@@ -373,7 +367,7 @@ private fun AppSettingsHubContent(
 
         SettingsNavigationRow(
             title = "Update Settings",
-            value = "${updateSettings.channel.label()} · every ${updateSettings.intervalHours}h",
+            value = "Nightly · every ${updateSettings.intervalHours}h",
             icon = Icons.Outlined.Refresh,
             enabled = true,
             onClick = onUpdatesClick
@@ -956,7 +950,6 @@ private fun UpdatesSettingsContent(
     statusText: String?,
     downloadProgress: Float?,
     onBack: () -> Unit,
-    onChannelSelected: (ReleaseChannel) -> Unit,
     onIntervalSelected: (Int) -> Unit,
     onCheckUpdatesClick: () -> Unit
 ) {
@@ -973,24 +966,6 @@ private fun UpdatesSettingsContent(
             subtitle = "Current version ${CurrentAppInfo.value.version}",
             onBack = onBack
         )
-
-        Spacer(Modifier.height(18.dp))
-
-        SettingsSectionLabel("Release Channel")
-        Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            ReleaseChannel.entries.forEachIndexed { index, channel ->
-                SegmentedButton(
-                    selected = settings.channel == channel,
-                    onClick = { onChannelSelected(channel) },
-                    shape = SegmentedButtonDefaults.itemShape(
-                        index = index,
-                        count = ReleaseChannel.entries.size
-                    ),
-                    label = { Text(channel.label()) }
-                )
-            }
-        }
 
         Spacer(Modifier.height(18.dp))
 
@@ -2150,13 +2125,6 @@ private fun AndroidConnectionMode.label(): String {
     return when (this) {
         AndroidConnectionMode.Tun -> "TUN"
         AndroidConnectionMode.Proxy -> "Proxy"
-    }
-}
-
-private fun ReleaseChannel.label(): String {
-    return when (this) {
-        ReleaseChannel.Stable -> "Stable"
-        ReleaseChannel.Nightly -> "Nightly"
     }
 }
 

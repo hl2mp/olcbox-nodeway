@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AppUpdateSettings(
     @SerialName("update_channel")
-    val channel: ReleaseChannel = ReleaseChannel.Stable,
+    val channel: ReleaseChannel = ReleaseChannel.Nightly,
     @SerialName("update_interval_hours")
     val intervalHours: Int = DEFAULT_INTERVAL_HOURS,
     @SerialName("last_update_check_at_epoch_ms")
@@ -17,7 +17,10 @@ data class AppUpdateSettings(
     val lastDownloadedUpdateVersion: String? = null
 ) {
     fun normalized(): AppUpdateSettings {
-        return copy(intervalHours = intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS))
+        return copy(
+            channel = ReleaseChannel.Nightly,
+            intervalHours = intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS)
+        )
     }
 
     companion object {

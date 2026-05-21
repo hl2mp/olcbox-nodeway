@@ -107,16 +107,10 @@ class AppUpdateService(
 
     companion object {
         fun selectAsset(assets: List<GithubReleaseAsset>, platform: UpdatePlatform): AppUpdateAsset? {
-            val token = platform.assetToken
-            val candidates = assets.filter { asset ->
-                val name = asset.name.lowercase()
-                token.all { it in name }
+            val asset = when (platform.os) {
+                "android" -> selectAndroidAsset(assets, platform)
+                else -> selectAssetByTokens(assets, platform.assetToken, platform.preferredExtensions)
             }
-            val asset = platform.preferredExtensions
-                .firstNotNullOfOrNull { extension ->
-                    candidates.firstOrNull { it.name.lowercase().endsWith(extension) }
-                }
-                ?: candidates.firstOrNull()
 
             return asset?.let {
                 AppUpdateAsset(
@@ -126,6 +120,48 @@ class AppUpdateService(
                     updatedAt = it.updatedAt
                 )
             }
+        }
+
+        private fun selectAndroidAsset(
+            assets: List<GithubReleaseAsset>,
+            platform: UpdatePlatform
+        ): GithubReleaseAsset? {
+            val preferredExtensions = platform.preferredExtensions
+            val exactAbiAsset = platform.androidArchTokens.firstNotNullOfOrNull { archToken ->
+                selectAssetByTokens(assets, listOf("android", archToken), preferredExtensions)
+            }
+            if (exactAbiAsset != null) return exactAbiAsset
+
+            val universalCandidates = assets.filter { asset ->
+                val name = asset.name.lowercase()
+                "android" in name && knownAndroidArchTokens.none { it in name }
+            }
+
+            return selectPreferredAsset(universalCandidates, preferredExtensions)
+        }
+
+        private fun selectAssetByTokens(
+            assets: List<GithubReleaseAsset>,
+            tokens: List<String>,
+            preferredExtensions: List<String>
+        ): GithubReleaseAsset? {
+            val candidates = assets.filter { asset ->
+                val name = asset.name.lowercase()
+                tokens.all { it in name }
+            }
+
+            return selectPreferredAsset(candidates, preferredExtensions)
+        }
+
+        private fun selectPreferredAsset(
+            candidates: List<GithubReleaseAsset>,
+            preferredExtensions: List<String>
+        ): GithubReleaseAsset? {
+            return preferredExtensions
+                .firstNotNullOfOrNull { extension ->
+                    candidates.firstOrNull { it.name.lowercase().endsWith(extension) }
+                }
+                ?: candidates.firstOrNull()
         }
 
         fun isUpdateAvailable(
@@ -183,6 +219,18 @@ data class UpdatePlatform(
             else -> listOf(os, arch)
         }
 
+    val androidArchTokens: List<String>
+        get() = when (os) {
+            "android" -> when (arch.lowercase()) {
+                "armeabi-v7a", "armeabi" -> listOf("armeabi-v7a", "armeabi")
+                "arm64", "arm64-v8a" -> listOf("arm64", "arm64-v8a")
+                "amd64", "x86_64" -> listOf("amd64", "x86_64")
+                "x86" -> listOf("x86")
+                else -> emptyList()
+            }
+            else -> emptyList()
+        }
+
     val preferredExtensions: List<String>
         get() = when (os) {
             "windows" -> listOf(".msi", ".exe", ".zip")
@@ -198,6 +246,16 @@ data class UpdatePlatform(
 }
 
 expect fun currentUpdatePlatform(): UpdatePlatform
+
+private val knownAndroidArchTokens = setOf(
+    "armeabi-v7a",
+    "armeabi",
+    "arm64-v8a",
+    "arm64",
+    "x86_64",
+    "amd64",
+    "x86"
+)
 
 @Serializable
 data class GithubRelease(

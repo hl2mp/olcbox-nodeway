@@ -402,17 +402,42 @@ jobs:
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :sharedUI:jvmTest :androidApp:assembleRelease --stacktrace
 
-      - name: Prepare Android release assets
+      - name: Prepare universal Android release asset
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp androidApp/build/outputs/apk/release/*.apk "dist/Olcbox-${OLCBOX_VERSION}-android-release.apk"
+          release_apk="$(find androidApp/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | sort | head -n 1)"
+          if [ -z "${release_apk}" ]; then
+            echo "Android release APK was not found" >&2
+            exit 1
+          fi
+          cp "${release_apk}" "dist/Olcbox-${OLCBOX_VERSION}-android-release.apk"
+
+      - name: Build armeabi-v7a production APK
+        working-directory: olcbox
+        run: |
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" -Polcbox.android.abiFilters=armeabi-v7a :androidApp:clean :androidApp:assembleRelease --stacktrace
+
+      - name: Prepare armeabi-v7a Android release asset
+        working-directory: olcbox
+        run: |
+          release_apk="$(find androidApp/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | sort | head -n 1)"
+          if [ -z "${release_apk}" ]; then
+            echo "Android armeabi-v7a release APK was not found" >&2
+            exit 1
+          fi
+          cp "${release_apk}" "dist/Olcbox-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Olcbox-android-apk
-          path: olcbox/dist/Olcbox-*-android-release.apk
+          name: Olcbox-android-apks
+          path: |
+            olcbox/dist/Olcbox-*-android-release.apk
+            olcbox/dist/Olcbox-*-android-armeabi-v7a-release.apk
 
   build-ios:
     needs: release_version
@@ -558,6 +583,7 @@ jobs:
             echo "- olcrtc branch: \`${OLCBOX_OLCRTC_REF}\`"
             echo "- App version: \`${OLCBOX_VERSION}\`"
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
+            echo "- Android APKs: universal and \`armeabi-v7a\`"
             echo "- Workflow: \`.github/workflows/release.yml\`"
             echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo

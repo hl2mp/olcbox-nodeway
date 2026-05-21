@@ -52,9 +52,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,7 +75,6 @@ import org.olcbox.app.data.share.SubscriptionShareItem
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.update.AppUpdateInfo
 import org.olcbox.app.update.AppUpdateSettings
-import org.olcbox.app.update.ReleaseChannel
 import kotlin.time.Instant
 
 data class ApplicationSocksProxySettings(
@@ -114,7 +110,6 @@ fun ApplicationSettingsSheet(
     onCopyConfigClick: () -> Unit,
     onSaveLogsClick: () -> Unit,
     onShareLogsClick: () -> Unit,
-    onUpdateChannelSelected: (ReleaseChannel) -> Unit,
     onUpdateIntervalSelected: (Int) -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onDownloadUpdateClick: (AppUpdateInfo) -> Unit,
@@ -205,7 +200,6 @@ fun ApplicationSettingsSheet(
                     downloadProgress = updateDownloadProgress,
                     offer = updateOffer,
                     onBack = { route = SharedSettingsRoute.Hub },
-                    onChannelSelected = onUpdateChannelSelected,
                     onIntervalSelected = onUpdateIntervalSelected,
                     onCheckUpdatesClick = onCheckUpdatesClick,
                     onDownloadUpdateClick = onDownloadUpdateClick,
@@ -264,7 +258,7 @@ private fun SharedSettingsHubContent(
 
         SharedNavigationRow(
             title = "Update Settings",
-            value = "${updateSettings.channel.label()} · every ${updateSettings.intervalHours}h",
+            value = "Nightly · every ${updateSettings.intervalHours}h",
             icon = Icons.Outlined.Refresh,
             onClick = onUpdatesClick
         )
@@ -480,7 +474,6 @@ private fun SharedUpdatesSettingsContent(
     downloadProgress: Float?,
     offer: AppUpdateInfo?,
     onBack: () -> Unit,
-    onChannelSelected: (ReleaseChannel) -> Unit,
     onIntervalSelected: (Int) -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onDownloadUpdateClick: (AppUpdateInfo) -> Unit,
@@ -507,24 +500,6 @@ private fun SharedUpdatesSettingsContent(
                 onDownload = { onDownloadUpdateClick(offer) },
                 onLater = { onLaterUpdateClick(offer) }
             )
-        }
-
-        Spacer(Modifier.height(18.dp))
-
-        SharedSectionLabel("Release Channel")
-        Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            ReleaseChannel.entries.forEachIndexed { index, channel ->
-                SegmentedButton(
-                    selected = settings.channel == channel,
-                    onClick = { onChannelSelected(channel) },
-                    shape = SegmentedButtonDefaults.itemShape(
-                        index = index,
-                        count = ReleaseChannel.entries.size
-                    ),
-                    label = { Text(channel.label()) }
-                )
-            }
         }
 
         Spacer(Modifier.height(18.dp))
@@ -1016,13 +991,6 @@ private enum class SharedSettingsRoute {
     Updates,
     Logs,
     SocksProxy
-}
-
-private fun ReleaseChannel.label(): String {
-    return when (this) {
-        ReleaseChannel.Stable -> "Stable"
-        ReleaseChannel.Nightly -> "Nightly"
-    }
 }
 
 private fun Int.subscriptionSummary(): String {

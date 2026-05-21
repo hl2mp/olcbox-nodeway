@@ -8,7 +8,7 @@ class IosUpdateSettingsStore(
     override suspend fun load(): AppUpdateSettings {
         val channel = defaults.stringForKey(KEY_CHANNEL)
             ?.let { value -> runCatching { ReleaseChannel.valueOf(value) }.getOrNull() }
-            ?: ReleaseChannel.Stable
+            ?: ReleaseChannel.Nightly
 
         val lastCheck = defaults.integerForKey(KEY_LAST_CHECK)
             .takeIf { it > 0L }

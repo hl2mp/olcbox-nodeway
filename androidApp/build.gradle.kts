@@ -24,6 +24,18 @@ val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
     .map { it.toInt() }
     .orElse(1)
+val defaultAndroidAbiFilters = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
+    .map { value ->
+        value.split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+    .getOrElse(defaultAndroidAbiFilters)
+
+require(androidAbiFilters.isNotEmpty()) {
+    "olcbox.android.abiFilters must contain at least one Android ABI"
+}
 
 android {
     namespace = "org.olcbox.app"
@@ -39,7 +51,7 @@ android {
         versionName = olcboxVersion.get()
 
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+            abiFilters += androidAbiFilters
         }
     }
 

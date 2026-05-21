@@ -426,11 +426,6 @@ fun AndroidMainScreen(
                 }
                 viewModel.onShareLogs(showToast, showToast)
             },
-            onUpdateChannelSelected = { channel ->
-                scope.launch {
-                    saveUpdateSettings(updateSettings.copy(channel = channel))
-                }
-            },
             onUpdateIntervalSelected = { hours ->
                 scope.launch {
                     saveUpdateSettings(updateSettings.copy(intervalHours = hours))

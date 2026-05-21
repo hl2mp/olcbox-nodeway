@@ -21,6 +21,13 @@ class AppUpdateServiceTest {
     }
 
     @Test
+    fun updateSettingsNormalizeToNightlyChannel() {
+        val settings = AppUpdateSettings(channel = ReleaseChannel.Stable)
+
+        assertEquals(ReleaseChannel.Nightly, settings.normalized().channel)
+    }
+
+    @Test
     fun nightlyUsesVersionFromAssetNameWhenAvailable() = runTest {
         val engine = MockEngine {
             respond(
@@ -79,6 +86,32 @@ class AppUpdateServiceTest {
         )
 
         assertEquals("https://example/app.apk", selected?.downloadUrl)
+    }
+
+    @Test
+    fun prefersAndroidAbiSpecificApk() {
+        val selected = AppUpdateService.selectAsset(
+            assets = listOf(
+                GithubReleaseAsset("Olcbox-1.0.70-android-release.apk", "https://example/universal.apk"),
+                GithubReleaseAsset("Olcbox-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk")
+            ),
+            platform = UpdatePlatform("android", "armeabi-v7a")
+        )
+
+        assertEquals("https://example/armeabi.apk", selected?.downloadUrl)
+    }
+
+    @Test
+    fun fallsBackToUniversalAndroidApk() {
+        val selected = AppUpdateService.selectAsset(
+            assets = listOf(
+                GithubReleaseAsset("Olcbox-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk"),
+                GithubReleaseAsset("Olcbox-1.0.70-android-release.apk", "https://example/universal.apk")
+            ),
+            platform = UpdatePlatform("android", "arm64")
+        )
+
+        assertEquals("https://example/universal.apk", selected?.downloadUrl)
     }
 
     @Test
