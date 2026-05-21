@@ -133,20 +133,18 @@ fun desktopArchName(arch: String): String = when (arch.lowercase()) {
 fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
 fun windowsMsysCommand(script: String): List<String> {
-    val command = System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }
-        ?: windowsMsysCmdPath()
-    return listOf("cmd.exe", "/D", "/S", "/C", command, "-c", script)
+    val bash = System.getenv("MSYS2_BASH")?.takeIf { it.isNotBlank() }
+        ?: windowsMsysBashPath()
+    return listOf(bash, "-lc", script)
 }
 
-fun windowsMsysCmdPath(): String {
-    System.getenv("MSYS2_CMD")?.takeIf { it.isNotBlank() }?.let { return it }
-
+fun windowsMsysBashPath(): String {
     val candidates = buildList {
-        add("C:\\msys64\\msys2_shell.cmd")
+        add("C:\\msys64\\usr\\bin\\bash.exe")
     }
 
     return candidates.firstOrNull { File(it).isFile }
-        ?: "msys2"
+        ?: "bash"
 }
 
 val hostDesktopArch = desktopArchName(System.getProperty("os.arch"))
