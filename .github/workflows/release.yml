@@ -102,6 +102,22 @@ jobs:
             gcc
             make
 
+      - name: Verify MSYS2 toolchain
+        shell: msys2 {0}
+        run: |
+          set -eux
+          export PATH=/usr/bin:/bin:$PATH
+          pacman -S --needed --noconfirm base-devel gcc make
+          command -v make
+          command -v cpp
+          command -v gcc
+          command -v ar
+          command -v ld
+          command -v strip
+          command -v install
+          make --version | head -1
+          gcc --version | head -1
+
       - name: Build Windows installers and portable zip
         shell: pwsh
         working-directory: olcbox

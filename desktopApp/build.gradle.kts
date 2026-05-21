@@ -372,22 +372,43 @@ if (currentBuildOs.isWindows) {
     val buildHevSocks5TunnelWindows = tasks.register<Exec>("buildHevSocks5TunnelWindows") {
         outputs.files(hevSocks5TunnelWindowsOutput, msysRuntimeWindowsOutput)
         workingDir = rootProject.layout.projectDirectory.asFile
+        environment("MSYSTEM", "MSYS")
+        environment("CHERE_INVOKING", "1")
         commandLine(
             windowsMsysCommand(
             """
             set -eu
+            export MSYSTEM=MSYS
+            export CHERE_INVOKING=1
+            export PATH=/usr/bin:/bin:${'$'}PATH
             source_dir=${shellQuote(windowsPathToMsysPath(hevSocks5TunnelSourceDir.asFile.absolutePath))}
             output_file=${shellQuote(windowsPathToMsysPath(hevSocks5TunnelWindowsOutput.get().asFile.absolutePath))}
             msys_runtime=${shellQuote(windowsPathToMsysPath(msysRuntimeWindowsOutput.get().asFile.absolutePath))}
+            echo "MSYS2 build environment:"
+            echo "  MSYSTEM=${'$'}MSYSTEM"
+            echo "  PATH=${'$'}PATH"
+            for tool in make cpp gcc ar ld strip install cp ls; do
+              if ! command -v "${'$'}tool" >/dev/null 2>&1; then
+                echo "Missing MSYS2 tool: ${'$'}tool" >&2
+                echo "Expected setup-msys2 to install base-devel gcc make into /usr/bin" >&2
+                ls -la /usr/bin/make* /usr/bin/gcc* 2>/dev/null || true
+                exit 127
+              fi
+              echo "  ${'$'}tool=$(command -v "${'$'}tool")"
+            done
             mkdir -p "${'$'}{output_file%/*}"
             cd "${'$'}source_dir"
-            make clean exec
+            make clean exec V=1 LFLAGS="-static-libgcc"
             if [ -f bin/hev-socks5-tunnel.exe ]; then
               install -m 0755 bin/hev-socks5-tunnel.exe "${'$'}output_file"
             else
               install -m 0755 bin/hev-socks5-tunnel "${'$'}output_file"
             fi
             cp /usr/bin/msys-2.0.dll "${'$'}msys_runtime"
+            if command -v ldd >/dev/null 2>&1; then
+              echo "hev-socks5-tunnel runtime dependencies:"
+              ldd "${'$'}output_file" || true
+            fi
             test -s "${'$'}output_file"
             test -s "${'$'}msys_runtime"
             ls -l "${'$'}output_file" "${'$'}msys_runtime"
