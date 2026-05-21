@@ -142,10 +142,10 @@ fun windowsPathToMsysPath(path: String): String {
     }
 }
 
-fun windowsMsysCommand(script: String): List<String> {
+fun windowsMsysScriptCommand(scriptFile: File): List<String> {
     val bash = System.getenv("MSYS2_BASH")?.takeIf { it.isNotBlank() }
         ?: windowsMsysBashPath()
-    return listOf(bash, "-lc", script)
+    return listOf(bash, "--noprofile", "--norc", windowsPathToMsysPath(scriptFile.absolutePath))
 }
 
 fun windowsMsysBashPath(): String {
@@ -370,14 +370,20 @@ if (currentBuildOs.isWindows) {
     }
 
     val buildHevSocks5TunnelWindows = tasks.register<Exec>("buildHevSocks5TunnelWindows") {
+        val buildScript = layout.buildDirectory.file("tmp/buildHevSocks5TunnelWindows/build.sh")
+
         outputs.files(hevSocks5TunnelWindowsOutput, msysRuntimeWindowsOutput)
         workingDir = rootProject.layout.projectDirectory.asFile
         environment("MSYSTEM", "MSYS")
         environment("CHERE_INVOKING", "1")
-        commandLine(
-            windowsMsysCommand(
-            """
-            set -eu
+
+        doFirst {
+            val scriptFile = buildScript.get().asFile
+            scriptFile.parentFile.mkdirs()
+            scriptFile.writeText(
+                """
+            #!/usr/bin/env bash
+            set -euo pipefail
             export MSYSTEM=MSYS
             export CHERE_INVOKING=1
             export PATH=/usr/bin:/bin:${'$'}PATH
@@ -412,8 +418,12 @@ if (currentBuildOs.isWindows) {
             test -s "${'$'}output_file"
             test -s "${'$'}msys_runtime"
             ls -l "${'$'}output_file" "${'$'}msys_runtime"
-            """.trimIndent()
+                """.trimIndent() + "\n"
             )
+        }
+
+        commandLine(
+            windowsMsysScriptCommand(buildScript.get().asFile)
         )
 
         doLast {
