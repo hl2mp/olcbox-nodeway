@@ -380,11 +380,6 @@ fun main() = application {
                                 onError = { message -> updateMessage = message }
                             )
                         },
-                        onUpdateChannelSelected = { channel ->
-                            scope.launch {
-                                saveUpdateSettings(updateSettings.copy(channel = channel))
-                            }
-                        },
                         onUpdateIntervalSelected = { hours ->
                             scope.launch {
                                 saveUpdateSettings(updateSettings.copy(intervalHours = hours))
