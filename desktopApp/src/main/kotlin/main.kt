@@ -86,6 +86,7 @@ import org.olcbox.app.data.share.SubscriptionShareItem
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.components.ApplicationSocksProxySettings
 import org.olcbox.app.ui.components.ApplicationSettingsSheet
+import org.olcbox.app.ui.components.ApplicationUpdateOfferSheet
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationItem
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -96,9 +97,10 @@ import org.olcbox.app.update.AppUpdateSettings
 import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.JvmUpdateInstaller
 import org.olcbox.app.update.JvmUpdateSettingsStore
-import org.olcbox.app.update.ReleaseChannel
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
+import org.olcbox.app.update.isUpdateCheckDue
+import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.DesktopSocksProxySettings
 import org.olcbox.app.vpn.DesktopVpnManager
 import org.olcbox.app.vpn.JvmDesktopSocksProxySettingsStore
@@ -131,7 +133,9 @@ private class DesktopAppDependencies {
     }
 }
 
-fun main() = application {
+private const val WINDOWS_ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
+
+fun main(args: Array<String>) = application {
     // Configure JNA to find native libraries in resources
     System.setProperty(
         "jna.library.path",
@@ -163,6 +167,9 @@ fun main() = application {
     fun checkUpdate(manual: Boolean) {
         scope.launch {
             val previousSettings = updateSettings
+            val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
+
             updateMessage = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = dependencies.updateService.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
@@ -170,14 +177,13 @@ fun main() = application {
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.isUpdateAvailable) {
+                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
                         if (info.isDownloaded(checkedSettings)) {
                             updateOffer = null
                             updateMessage = "Latest ${info.channel.name.lowercase()} is already downloaded"
                         } else if (info.isUpdateAvailable) {
                             updateOffer = info
                             updateMessage = "${info.channel.name} update found: ${info.version}"
-                            showDesktopSettings = true
                         } else {
                             updateOffer = null
                             updateMessage = "Olcbox is up to date"
@@ -229,6 +235,11 @@ fun main() = application {
         updateSettings = loaded
         dependencies.vpnManager.updateSocksProxySettings(dependencies.socksProxySettingsStore.load())
         checkUpdate(manual = false)
+        if (WINDOWS_ELEVATED_START_ARGUMENT in args) {
+            dependencies.homeViewModel.loadCurrentConfig {
+                dependencies.homeViewModel.ToggleVpn()
+            }
+        }
     }
 
     LaunchedEffect(desktopNotice) {
@@ -431,6 +442,15 @@ fun main() = application {
                                 dependencies.homeViewModel.restartVpnIfRunning()
                             }
                         }
+                    )
+                }
+
+                updateOffer?.let { info ->
+                    ApplicationUpdateOfferSheet(
+                        info = info,
+                        downloadProgress = updateProgress,
+                        onLater = { postponeUpdate(info) },
+                        onDownload = { downloadUpdate(info) }
                     )
                 }
 

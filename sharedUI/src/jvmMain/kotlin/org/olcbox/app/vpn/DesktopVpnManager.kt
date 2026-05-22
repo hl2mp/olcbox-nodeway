@@ -196,6 +196,10 @@ class DesktopVpnManager private constructor(
             val desktopMode = DesktopMode.current()
             val socksSettings = _socksProxySettings.value.normalized()
 
+            if (desktopMode == DesktopMode.WindowsTun) {
+                windowsTunController.ensureAdministratorOrRequestRestart()
+            }
+
             process = startOlcRtcProcessWithFallback(
                 location = location,
                 socksSettings = socksSettings,

@@ -30,6 +30,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_DYNAMIC_THEME
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS
+import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_HOST
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PASSWORD
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PORT
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME
@@ -67,6 +68,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
                 .map { preferences ->
                     val mode = AndroidConnectionMode.fromValue(preferences[KEY_ANDROID_CONNECTION_MODE])
                     val proxy = AndroidSocksProxySettings(
+                        host = AndroidSocksProxySettings.sanitizeHost(
+                            preferences[KEY_ANDROID_SOCKS_HOST]
+                        ),
                         port = AndroidSocksProxySettings.sanitizePort(
                             preferences[KEY_ANDROID_SOCKS_PORT]
                         ),
@@ -121,19 +125,27 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         }
     }
 
-    fun updateProxySettings(username: String, password: String, port: Int = _proxySettings.value.port) {
+    fun updateProxySettings(
+        host: String,
+        username: String,
+        password: String,
+        port: Int = _proxySettings.value.port
+    ) {
+        val sanitizedHost = AndroidSocksProxySettings.sanitizeHost(host)
         val sanitizedUsername = username.trim().take(MAX_SOCKS_USERNAME_LENGTH)
             .ifBlank { generateProxyUsername() }
         val sanitized = password.trim().take(MAX_SOCKS_PASSWORD_LENGTH)
             .ifBlank { generateProxyPassword() }
         val sanitizedPort = AndroidSocksProxySettings.sanitizePort(port)
         _proxySettings.value = _proxySettings.value.copy(
+            host = sanitizedHost,
             port = sanitizedPort,
             username = sanitizedUsername,
             password = sanitized
         )
         scope.launch {
             appContext.vpnPrefDataStore.edit { preferences ->
+                preferences[KEY_ANDROID_SOCKS_HOST] = sanitizedHost
                 preferences[KEY_ANDROID_SOCKS_PORT] = sanitizedPort
                 preferences[KEY_ANDROID_SOCKS_USERNAME] = sanitizedUsername
                 preferences[KEY_ANDROID_SOCKS_USERNAME_INITIALIZED] = true
@@ -143,7 +155,11 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     }
 
     fun updateProxyPassword(password: String) {
-        updateProxySettings(_proxySettings.value.username, password)
+        updateProxySettings(
+            host = _proxySettings.value.host,
+            username = _proxySettings.value.username,
+            password = password
+        )
     }
 
     fun regenerateProxyPassword() {
@@ -201,6 +217,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             setClassName(context.packageName, OlcboxVpnActions.SERVICE_CLASS_NAME)
             action = OlcboxVpnActions.ACTION_START_VPN
             putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, _connectionMode.value.value)
+            putExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST, _proxySettings.value.host)
             putExtra(OlcboxVpnActions.EXTRA_SOCKS_PORT, _proxySettings.value.port)
             putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, _proxySettings.value.username)
             putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, _proxySettings.value.password)
@@ -253,7 +270,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
         val proxy = _proxySettings.value
         return SubscriptionFetchProxy(
-            host = proxy.host,
+            host = AndroidSocksProxySettings.connectHost(proxy.host),
             port = proxy.port,
             username = proxy.username,
             password = proxy.password
@@ -271,6 +288,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             if (preferences[KEY_ANDROID_SOCKS_PASSWORD].isNullOrBlank()) {
                 preferences[KEY_ANDROID_SOCKS_PASSWORD] = generateProxyPassword()
             }
+            preferences[KEY_ANDROID_SOCKS_HOST] = AndroidSocksProxySettings.sanitizeHost(
+                preferences[KEY_ANDROID_SOCKS_HOST]
+            )
             preferences[KEY_ANDROID_SOCKS_PORT] = AndroidSocksProxySettings.sanitizePort(
                 preferences[KEY_ANDROID_SOCKS_PORT]
             )

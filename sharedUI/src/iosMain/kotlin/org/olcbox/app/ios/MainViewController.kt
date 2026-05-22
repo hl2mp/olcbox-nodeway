@@ -23,6 +23,7 @@ import org.olcbox.app.data.share.ConfigShareService
 import org.olcbox.app.data.share.SubscriptionShareItem
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.components.ApplicationSettingsSheet
+import org.olcbox.app.ui.components.ApplicationUpdateOfferSheet
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationItem
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -34,6 +35,8 @@ import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.IosUpdateSettingsStore
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
+import org.olcbox.app.update.isUpdateCheckDue
+import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.vpn.IosVpnManager
 import platform.UIKit.UIViewController
 
@@ -122,6 +125,9 @@ private fun IosApp(
     fun checkUpdate(manual: Boolean) {
         scope.launch {
             val previousSettings = updateSettings
+            val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
+
             updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = dependencies.updateService.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
@@ -129,7 +135,7 @@ private fun IosApp(
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.isUpdateAvailable) {
+                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
                         if (info.isDownloaded(checkedSettings)) {
                             updateOffer = null
                             updateStatusText = "Latest ${info.channel.name.lowercase()} is already downloaded"
@@ -150,6 +156,18 @@ private fun IosApp(
                 }
             )
         }
+    }
+
+    fun laterUpdate(info: AppUpdateInfo) {
+        scope.launch {
+            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
+            updateOffer = null
+        }
+    }
+
+    fun downloadUpdate(info: AppUpdateInfo) {
+        updateStatusText = "Install ${info.version} from the release page"
+        updateOffer = null
     }
 
     LaunchedEffect(Unit) {
@@ -258,16 +276,8 @@ private fun IosApp(
                         }
                     },
                     onCheckUpdatesClick = { checkUpdate(manual = true) },
-                    onDownloadUpdateClick = { info ->
-                        updateStatusText = "Install ${info.version} from the release page"
-                        updateOffer = null
-                    },
-                    onLaterUpdateClick = { info ->
-                        scope.launch {
-                            saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
-                            updateOffer = null
-                        }
-                    },
+                    onDownloadUpdateClick = ::downloadUpdate,
+                    onLaterUpdateClick = ::laterUpdate,
                     onSubscriptionShareClick = { url ->
                         platformBridge.shareText("Subscription", ConfigShareService.subscriptionQrText(url))
                     },
@@ -293,6 +303,15 @@ private fun IosApp(
                             dependencies.homeViewModel.restartVpnIfRunning()
                         }
                     }
+                )
+            }
+
+            updateOffer?.let { info ->
+                ApplicationUpdateOfferSheet(
+                    info = info,
+                    downloadProgress = updateDownloadProgress,
+                    onLater = { laterUpdate(info) },
+                    onDownload = { downloadUpdate(info) }
                 )
             }
         }

@@ -29,7 +29,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v6
         with:
-          repository: openlibrecommunity/olcrtc
+          repository: alananisimov/olcrtc
           ref: master
           path: olcrtc
           submodules: recursive

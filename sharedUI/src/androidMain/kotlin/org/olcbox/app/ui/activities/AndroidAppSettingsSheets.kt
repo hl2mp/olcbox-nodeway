@@ -139,7 +139,7 @@ internal fun AppSettingsSheet(
     onSubscriptionRefreshClick: (String) -> Unit,
     onDynamicThemeChanged: (Boolean) -> Unit,
     onModeSelected: (AndroidConnectionMode) -> Unit,
-    onProxySettingsSaved: (String, String, Int) -> Unit,
+    onProxySettingsSaved: (String, String, String, Int) -> Unit,
     onProxyPasswordRegenerated: () -> Unit,
     onSplitTunnelModeSelected: (AndroidSplitTunnelMode) -> Unit,
     onSplitTunnelAppToggled: (AndroidSplitTunnelList, String) -> Unit,
@@ -489,19 +489,23 @@ private fun SocksProxySettingsContent(
     enabled: Boolean,
     isConnectionActive: Boolean,
     onBack: () -> Unit,
-    onProxySettingsSaved: (String, String, Int) -> Unit,
+    onProxySettingsSaved: (String, String, String, Int) -> Unit,
     onProxyPasswordRegenerated: () -> Unit
 ) {
+    var editedHost by remember(proxySettings.host) { mutableStateOf(proxySettings.host) }
     var editedPort by remember(proxySettings.port) { mutableStateOf(proxySettings.port.toString()) }
     var editedUsername by remember(proxySettings.username) { mutableStateOf(proxySettings.username) }
     var editedPassword by remember(proxySettings.password) { mutableStateOf(proxySettings.password) }
     val parsedPort = editedPort.toIntOrNull()
+    val hostValid = editedHost.isNotBlank()
     val portValid = parsedPort != null && AndroidSocksProxySettings.isValidPort(parsedPort)
+    val hostChanged = editedHost != proxySettings.host
     val portChanged = parsedPort != null && parsedPort != proxySettings.port
     val usernameChanged = editedUsername != proxySettings.username
     val passwordChanged = editedPassword != proxySettings.password
-    val settingsChanged = portChanged || usernameChanged || passwordChanged
-    val canSave = portValid &&
+    val settingsChanged = hostChanged || portChanged || usernameChanged || passwordChanged
+    val canSave = hostValid &&
+            portValid &&
             editedUsername.isNotBlank() &&
             editedPassword.isNotBlank() &&
             settingsChanged &&
@@ -522,22 +526,38 @@ private fun SocksProxySettingsContent(
         Spacer(Modifier.height(20.dp))
 
         SocksProxySettingsForm(
+            host = editedHost,
             port = editedPort,
             username = editedUsername,
             password = editedPassword,
+            hostValid = hostValid,
             portValid = portValid,
+            hostChanged = hostChanged,
             portChanged = portChanged,
             usernameChanged = usernameChanged,
             passwordChanged = passwordChanged,
             canSave = canSave,
             enabled = enabled,
             isConnectionActive = isConnectionActive,
+            onHostChanged = { value ->
+                editedHost = value
+                    .replace("\r", "")
+                    .replace("\n", "")
+                    .take(AndroidSocksProxySettings.MAX_HOST_LENGTH)
+            },
             onPortChanged = { value ->
                 editedPort = value.filter { it.isDigit() }.take(MAX_PROXY_PORT_LENGTH)
             },
             onUsernameChanged = { value -> editedUsername = value.take(MAX_PROXY_USERNAME_LENGTH) },
             onPasswordChanged = { value -> editedPassword = value.take(MAX_PROXY_PASSWORD_LENGTH) },
-            onSaveSettings = { onProxySettingsSaved(editedUsername, editedPassword, parsedPort ?: proxySettings.port) },
+            onSaveSettings = {
+                onProxySettingsSaved(
+                    editedHost,
+                    editedUsername,
+                    editedPassword,
+                    parsedPort ?: proxySettings.port
+                )
+            },
             onRegeneratePassword = onProxyPasswordRegenerated
         )
     }
@@ -1725,16 +1745,20 @@ private fun SplitTunnelAppListAction(
 
 @Composable
 private fun SocksProxySettingsForm(
+    host: String,
     port: String,
     username: String,
     password: String,
+    hostValid: Boolean,
     portValid: Boolean,
+    hostChanged: Boolean,
     portChanged: Boolean,
     usernameChanged: Boolean,
     passwordChanged: Boolean,
     canSave: Boolean,
     enabled: Boolean,
     isConnectionActive: Boolean,
+    onHostChanged: (String) -> Unit,
     onPortChanged: (String) -> Unit,
     onUsernameChanged: (String) -> Unit,
     onPasswordChanged: (String) -> Unit,
@@ -1747,6 +1771,23 @@ private fun SocksProxySettingsForm(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SettingsSectionLabel("Endpoint")
+
+            SocksProxyTextField(
+                value = host,
+                onValueChange = onHostChanged,
+                label = "Listen address",
+                placeholder = AndroidSocksProxySettings.DEFAULT_HOST,
+                enabled = enabled,
+                isError = !hostValid,
+                leadingIcon = Icons.Rounded.Public,
+                supportingText = when {
+                    !hostValid -> "Listen address is required"
+                    hostChanged && isConnectionActive -> "Saving restarts the active connection"
+                    hostChanged -> "Unsaved change"
+                    else -> null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+            )
 
             SocksProxyTextField(
                 value = port,

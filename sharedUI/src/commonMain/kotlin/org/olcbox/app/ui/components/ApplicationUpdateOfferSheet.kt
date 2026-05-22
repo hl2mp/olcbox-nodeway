@@ -1,4 +1,4 @@
-package org.olcbox.app.ui.activities
+package org.olcbox.app.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +28,7 @@ import org.olcbox.app.update.AppUpdateInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AndroidUpdateOfferSheet(
+fun ApplicationUpdateOfferSheet(
     info: AppUpdateInfo,
     downloadProgress: Float?,
     onLater: () -> Unit,
@@ -50,7 +50,7 @@ internal fun AndroidUpdateOfferSheet(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Обновите приложение",
+                    text = "Update available",
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -63,7 +63,7 @@ internal fun AndroidUpdateOfferSheet(
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {

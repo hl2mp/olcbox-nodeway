@@ -28,7 +28,10 @@ import org.olcbox.app.update.AppUpdateService
 import org.olcbox.app.update.AndroidUpdateInstaller
 import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
+import org.olcbox.app.update.isUpdateCheckDue
+import org.olcbox.app.update.shouldShowOffer
 import org.olcbox.app.ui.OlcboxAppContent
+import org.olcbox.app.ui.components.ApplicationUpdateOfferSheet
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.navigation.AppScreen
@@ -173,6 +176,9 @@ fun AndroidMainScreen(
         }
         scope.launch {
             val previousSettings = updateSettings
+            val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
+
             updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = service.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
@@ -180,7 +186,7 @@ fun AndroidMainScreen(
             saveUpdateSettings(checkedSettings)
             result.fold(
                 onSuccess = { info ->
-                    if (manual || info.isUpdateAvailable) {
+                    if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
                         showUpdateResult(info)
                     } else {
                         updateOffer = null
@@ -382,7 +388,7 @@ fun AndroidMainScreen(
     }
 
     updateOffer?.let { info ->
-        AndroidUpdateOfferSheet(
+        ApplicationUpdateOfferSheet(
             info = info,
             downloadProgress = updateDownloadProgress,
             onLater = { postponeUpdate(info) },
@@ -468,15 +474,15 @@ fun AndroidMainScreen(
                     vpnManager.selectConnectionMode(mode)
                 }
             },
-            onProxySettingsSaved = { username, password, port ->
-                vpnManager.updateProxySettings(username, password, port)
-                if (homeState.isVpnConnected && connectionMode == AndroidConnectionMode.Proxy) {
+            onProxySettingsSaved = { host, username, password, port ->
+                vpnManager.updateProxySettings(host, username, password, port)
+                if (homeState.isVpnConnected) {
                     viewModel.restartVpnIfRunning()
                 }
             },
             onProxyPasswordRegenerated = {
                 vpnManager.regenerateProxyPassword()
-                if (homeState.isVpnConnected && connectionMode == AndroidConnectionMode.Proxy) {
+                if (homeState.isVpnConnected) {
                     viewModel.restartVpnIfRunning()
                 }
             },

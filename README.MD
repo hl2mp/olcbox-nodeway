@@ -63,7 +63,7 @@ The author does not support or encourage such use.
 | Android | Android Studio, Android SDK, Android NDK |
 | Desktop native assets | Go and local `olcrtc` fork |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
-| Windows TUN | Administrator launch rights and bundled Wintun runtime |
+| Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 
 Default local `olcrtc` path:
 

@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import kotlin.system.exitProcess
 
 internal class WindowsTunController(
     private val addLog: (String) -> Unit
@@ -15,7 +16,7 @@ internal class WindowsTunController(
         tun2SocksBinary: Path,
         socksPort: Int = PacServer.LOCAL_SOCKS_PORT
     ): Process {
-        requireAdministrator()
+        ensureAdministratorOrRequestRestart()
 
         val process = ProcessBuilder(tun2SocksCommand(tun2SocksBinary, socksPort))
             .directory(tun2SocksBinary.parent.toFile())
@@ -47,7 +48,15 @@ internal class WindowsTunController(
         stopProcess(process)
     }
 
-    private suspend fun requireAdministrator() {
+    suspend fun ensureAdministratorOrRequestRestart() {
+        if (isAdministrator()) return
+
+        addLog("Requesting Windows administrator privileges for TUN mode")
+        requestAdministratorRestart()
+        exitProcess(0)
+    }
+
+    private suspend fun isAdministrator(): Boolean {
         val isAdmin = runPowerShell(
             """
             ${'$'}principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -55,9 +64,27 @@ internal class WindowsTunController(
             """.trimIndent()
         ).trim().equals("true", ignoreCase = true)
 
-        if (!isAdmin) {
-            error("Windows TUN mode requires running Olcbox as administrator")
+        return isAdmin
+    }
+
+    private suspend fun requestAdministratorRestart() {
+        val processInfo = ProcessHandle.current().info()
+        val currentCommand = processInfo.command().orElse(null)
+            ?: error("Olcbox cannot resolve its Windows launcher for administrator restart")
+        val currentArguments = processInfo.arguments().orElse(emptyArray()).toList()
+        val restartArguments = if (ELEVATED_START_ARGUMENT in currentArguments) {
+            currentArguments
+        } else {
+            currentArguments + ELEVATED_START_ARGUMENT
         }
+
+        runPowerShell(
+            restartAsAdministratorScript(
+                command = currentCommand,
+                arguments = restartArguments,
+                workingDirectory = System.getProperty("user.dir").orEmpty()
+            )
+        )
     }
 
     private suspend fun waitForAdapter(process: Process) {
@@ -174,6 +201,7 @@ internal class WindowsTunController(
         const val TUN_READY_POLL_MS = 100L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+        const val ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
 
         fun tun2SocksCommand(
             tun2SocksBinary: Path,
@@ -189,5 +217,57 @@ internal class WindowsTunController(
             "--loglevel",
             "warn"
         )
+
+        fun restartAsAdministratorScript(
+            command: String,
+            arguments: List<String>,
+            workingDirectory: String
+        ): String {
+            val quotedArguments = arguments
+                .joinToString(separator = " ") { it.windowsCommandLineArgument() }
+                .powershellLiteral()
+            val workingDirectoryLine = workingDirectory
+                .takeIf { it.isNotBlank() }
+                ?.let { "  WorkingDirectory = ${it.powershellLiteral()}" }
+                .orEmpty()
+
+            return """
+                ${'$'}ErrorActionPreference = 'Stop'
+                ${'$'}startArgs = @{
+                  FilePath = ${command.powershellLiteral()}
+                  Verb = 'RunAs'
+                  ArgumentList = $quotedArguments
+                $workingDirectoryLine
+                }
+                Start-Process @startArgs | Out-Null
+            """.trimIndent()
+        }
+
+        private fun String.powershellLiteral(): String = "'${replace("'", "''")}'"
+
+        private fun String.windowsCommandLineArgument(): String {
+            if (isEmpty()) return "\"\""
+            if (none { it.isWhitespace() || it == '"' }) return this
+
+            val quoted = StringBuilder("\"")
+            var pendingBackslashes = 0
+            for (char in this) {
+                when (char) {
+                    '\\' -> pendingBackslashes++
+                    '"' -> {
+                        repeat(pendingBackslashes * 2 + 1) { quoted.append('\\') }
+                        quoted.append(char)
+                        pendingBackslashes = 0
+                    }
+                    else -> {
+                        repeat(pendingBackslashes) { quoted.append('\\') }
+                        pendingBackslashes = 0
+                        quoted.append(char)
+                    }
+                }
+            }
+            repeat(pendingBackslashes * 2) { quoted.append('\\') }
+            return quoted.append('"').toString()
+        }
     }
 }

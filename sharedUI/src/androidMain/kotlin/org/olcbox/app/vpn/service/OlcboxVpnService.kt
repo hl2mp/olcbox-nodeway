@@ -53,6 +53,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_PROXY_APPS
+import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_HOST
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PASSWORD
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PORT
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME
@@ -117,6 +118,7 @@ class OlcboxVpnService : VpnService() {
     private var currentNetworkTransport: UpstreamTransport? = null
     private var isCallbackRegistered = false
     private var connectionMode = AndroidConnectionMode.Tun
+    private var socksListenHost = AndroidSocksProxySettings.DEFAULT_HOST
     private var socksListenPort = AndroidSocksProxySettings.DEFAULT_PORT
     private var socksUsername = ""
     private var socksPassword = ""
@@ -127,6 +129,7 @@ class OlcboxVpnService : VpnService() {
 
     private data class StartOptions(
         val connectionMode: AndroidConnectionMode,
+        val socksListenHost: String,
         val socksListenPort: Int,
         val socksUsername: String,
         val socksPassword: String,
@@ -332,6 +335,10 @@ class OlcboxVpnService : VpnService() {
                 intent.getStringExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE)
                     ?: preferences?.get(KEY_ANDROID_CONNECTION_MODE)
             ),
+            socksListenHost = AndroidSocksProxySettings.sanitizeHost(
+                intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST)
+                    ?: preferences?.get(KEY_ANDROID_SOCKS_HOST)
+            ),
             socksListenPort = AndroidSocksProxySettings.sanitizePort(socksPort),
             socksUsername = (
                 intent.getStringExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME)
@@ -356,6 +363,7 @@ class OlcboxVpnService : VpnService() {
 
     private fun applyStartOptions(options: StartOptions) {
         connectionMode = options.connectionMode
+        socksListenHost = options.socksListenHost
         socksListenPort = options.socksListenPort
         socksUsername = options.socksUsername
         socksPassword = options.socksPassword
@@ -528,7 +536,7 @@ class OlcboxVpnService : VpnService() {
             setStatus(VpnStatus.Connected)
             resetRecoveryState()
             updateNotification(connectedNotificationText())
-            addLog("Proxy mode connected on SOCKS ${AndroidSocksProxySettings.DEFAULT_HOST}:$socksListenPort")
+            addLog("Proxy mode connected on SOCKS $socksListenHost:$socksListenPort")
             startWatchdog()
             return
         }
@@ -600,7 +608,7 @@ class OlcboxVpnService : VpnService() {
                 return false
             }
             coroutineContext.ensureActive()
-            addLog("olcRTC ready on 127.0.0.1:$targetSocksPort")
+            addLog("olcRTC ready on $socksListenHost:$targetSocksPort")
             addLog("username: $socksUsername, password: $socksPassword")
             markRtcConnected()
             if (keepProcessBound) {
@@ -652,6 +660,7 @@ class OlcboxVpnService : VpnService() {
         Mobile.setProviders()
         Mobile.setTransport(config.transport)
         Mobile.setDNS("1.1.1.1:53")
+        Mobile.setSocksListenHost(socksListenHost)
         Mobile.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
     }
 
@@ -797,7 +806,7 @@ class OlcboxVpnService : VpnService() {
               ipv4: $TUN_IPV4_ADDRESS
 
             socks5:
-              address: 127.0.0.1
+              address: ${socksConnectHost()}
               port: $socksListenPort
               udp: 'tcp'
               pipeline: false
@@ -1032,11 +1041,15 @@ class OlcboxVpnService : VpnService() {
         return runCatching {
             Socket().use { socket ->
                 socket.connect(
-                    InetSocketAddress("127.0.0.1", port),
+                    InetSocketAddress(socksConnectHost(), port),
                     SOCKET_CONNECT_TIMEOUT_MS
                 )
             }
         }.isSuccess
+    }
+
+    private fun socksConnectHost(): String {
+        return AndroidSocksProxySettings.connectHost(socksListenHost)
     }
 
     private fun handleRtcLine(line: String) {

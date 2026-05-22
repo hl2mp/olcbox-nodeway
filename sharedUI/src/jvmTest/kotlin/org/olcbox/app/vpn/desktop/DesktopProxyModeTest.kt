@@ -258,6 +258,21 @@ class DesktopProxyModeTest {
     }
 
     @Test
+    fun windowsTunAdministratorRestartUsesRunAsAndPreservesArguments() {
+        val script = WindowsTunController.restartAsAdministratorScript(
+            command = "C:/Olc's/Olcbox.exe",
+            arguments = listOf("--flag", "C:/Path With Space/data"),
+            workingDirectory = "C:/Olcbox Data"
+        )
+
+        assertContains(script, "FilePath = 'C:/Olc''s/Olcbox.exe'")
+        assertContains(script, "Verb = 'RunAs'")
+        assertContains(script, "ArgumentList = '--flag \"C:/Path With Space/data\"'")
+        assertContains(script, "WorkingDirectory = 'C:/Olcbox Data'")
+        assertContains(script, "Start-Process @startArgs")
+    }
+
+    @Test
     fun linuxTunScriptsRouteUserTrafficThroughTunAndKeepRootDirect() {
         val up = LinuxTunController.upScriptContent()
         val down = LinuxTunController.downScriptContent()
