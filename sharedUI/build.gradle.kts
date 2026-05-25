@@ -18,7 +18,7 @@ plugins {
 
 val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
     .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc").absolutePath)
-val olcrtcRepoDir = file(olcrtcRepoPath.get())
+val olcrtcRepoDir = rootProject.file(olcrtcRepoPath.get())
 val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
 val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
 val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")

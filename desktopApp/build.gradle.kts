@@ -110,6 +110,7 @@ val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
     .absolutePath
 val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
     .orElse(defaultOlcRtcRepo)
+val olcrtcRepoDir = olcrtcRepo.map { rootProject.file(it) }
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
 val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()
@@ -143,7 +144,7 @@ fun registerOlcRtcBuildTask(
     val outputFile = generatedNativeResources.map { it.file("native/$outputName") }
 
     outputs.file(outputFile)
-    workingDir = file(olcrtcRepo.get())
+    workingDir = olcrtcRepoDir.get()
     environment("GOOS", goos)
     environment("GOARCH", goarch)
     environment("CGO_ENABLED", "0")
@@ -172,7 +173,7 @@ fun registerOlcRtcLibraryBuildTask(
     val outputFile = generatedNativeResources.map { it.file("native/$outputName") }
 
     outputs.file(outputFile)
-    workingDir = file(olcrtcRepo.get())
+    workingDir = olcrtcRepoDir.get()
     environment("GOOS", goos)
     environment("GOARCH", goarch)
     environment("CGO_ENABLED", "1")
@@ -264,7 +265,7 @@ val buildOlcRtcLibWindowsAmd64 = registerOlcRtcLibraryBuildTask(
 )
 
 val copyOlcRtcDataAssets = tasks.register<Copy>("copyOlcRtcDataAssets") {
-    from(olcrtcRepo.map { file(it).resolve("data") }) {
+    from(olcrtcRepoDir.map { it.resolve("data") }) {
         include("names", "surnames")
     }
     into(generatedNativeResources.map { it.dir("olcrtc-data") })

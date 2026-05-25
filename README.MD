@@ -77,6 +77,12 @@ Override it with `OLCRTC_REPO`:
 OLCRTC_REPO=/path/to/olcrtc ./gradlew :desktopApp:run
 ```
 
+Relative `OLCRTC_REPO` values are resolved from the `olcbox` project root:
+
+```bash
+OLCRTC_REPO=../olcrtc-ansible-deploy/olcrtc ./gradlew :androidApp:assembleRelease
+```
+
 ```powershell
 $env:OLCRTC_REPO="C:\path\to\olcrtc"
 .\gradlew.bat :desktopApp:run
