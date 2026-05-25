@@ -469,6 +469,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
