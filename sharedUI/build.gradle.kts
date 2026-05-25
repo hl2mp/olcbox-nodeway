@@ -16,16 +16,15 @@ plugins {
     alias(libs.plugins.metro)
 }
 
-val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
-    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc").absolutePath)
-val olcrtcRepoDir = file(olcrtcRepoPath.get())
-val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
-val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
-val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")
-val olcrtcIosXcframeworkDir = olcrtcIosXcframework.get().asFile
 val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionValue = olcboxVersion.get()
 val generatedAppInfoDir = layout.buildDirectory.dir("generated/source/olcboxAppInfo/commonMain")
+
+val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
+    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc").absolutePath)
+val olcrtcRepoDir = file(olcrtcRepoPath.get())
+val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")
+val olcrtcIosXcframeworkDir = olcrtcIosXcframework.get().asFile
 
 abstract class GenerateAppInfoTask : DefaultTask() {
     @get:Input
@@ -52,33 +51,10 @@ abstract class GenerateAppInfoTask : DefaultTask() {
     }
 }
 
-olcrtcAndroidAarFile.parentFile.mkdirs()
-
-val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Builds olcrtc Android AAR from OLCRTC_REPO using gomobile."
-
-    inputs.dir(olcrtcRepoDir.resolve("mobile"))
-    inputs.dir(olcrtcRepoDir.resolve("internal"))
-    inputs.files(olcrtcRepoDir.resolve("go.mod"), olcrtcRepoDir.resolve("go.sum"))
-    outputs.file(olcrtcAndroidAar)
-
-    workingDir = olcrtcRepoDir
-    commandLine(
-        "gomobile",
-        "bind",
-        "-target=android/arm,android/arm64,android/amd64",
-        "-androidapi",
-        "21",
-        "-ldflags",
-        "-s -w -checklinkname=0",
-        "-o",
-        olcrtcAndroidAarFile.absolutePath,
-        "./mobile"
-    )
+val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
+    version.set(olcboxVersionValue)
+    outputDir.set(generatedAppInfoDir)
 }
-
-val olcrtcAndroidAarDependency = files(olcrtcAndroidAarFile).builtBy(buildOlcrtcAndroidAar)
 
 val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
     group = "build"
@@ -106,11 +82,6 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
         olcrtcIosXcframeworkDir.absolutePath,
         "./mobile"
     )
-}
-
-val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
-    version.set(olcboxVersionValue)
-    outputDir.set(generatedAppInfoDir)
 }
 
 kotlin {
@@ -183,7 +154,7 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kstore.file)
             implementation(libs.zxing.core)
-            implementation(olcrtcAndroidAarDependency)
+            implementation(project(":sharedUI:olcrtc-bin"))
         }
 
         jvmMain.dependencies {
