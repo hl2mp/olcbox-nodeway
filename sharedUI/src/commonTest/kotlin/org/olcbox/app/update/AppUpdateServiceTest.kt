@@ -21,10 +21,10 @@ class AppUpdateServiceTest {
     }
 
     @Test
-    fun updateSettingsNormalizeToNightlyChannel() {
+    fun updateSettingsPreservesChannel() {
         val settings = AppUpdateSettings(channel = ReleaseChannel.Stable)
 
-        assertEquals(ReleaseChannel.Nightly, settings.normalized().channel)
+        assertEquals(ReleaseChannel.Stable, settings.normalized().channel)
     }
 
     @Test
