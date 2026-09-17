@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
@@ -126,6 +127,23 @@ class DesktopVpnManager private constructor(
             locationConfig = locationConfig,
             deviceId = locationsRepository.getDeviceIdentity()
         )
+    }
+
+    override suspend fun pingVless(
+        vlessConfig: VlessConfig,
+        socksUsername: String,
+        socksPassword: String
+    ): Long? {
+        return null
+    }
+
+    override fun socksCredentials(): Pair<String, String>? {
+        val socks = _socksProxySettings.value.normalized()
+        return if (socks.username.isNotBlank() && socks.password.isNotBlank()) {
+            Pair(socks.username, socks.password)
+        } else {
+            null
+        }
     }
 
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {

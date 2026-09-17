@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MeetingRoom
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.ui.components.PingButton
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 
@@ -113,13 +115,10 @@ fun LocationSettingsScreen(
     onShareLocationRequested: (LocationConfig) -> Unit = {},
     onBack: () -> Unit
 ) {
-    val config = viewModel.editingConfig
-    val name = viewModel.editingName
+    val isAddMode = viewModel.editingId == null
+    val isVless = viewModel.isVlessEdit
     val isSaving = viewModel.isSaving
-    val normalizedTransport = LocationConfig.normalizeTransport(
-        config.transport,
-        config.bypassProvider
-    )
+    val formValid = if (isVless) viewModel.isVlessFormValid else viewModel.isFormValid
     val density = LocalDensity.current
     val isKeyboardVisible = WindowInsets.ime.getBottom(density) > 0
 
@@ -127,7 +126,7 @@ fun LocationSettingsScreen(
         modifier = Modifier.fillMaxSize().imePadding(),
         topBar = {
             LocationSettingsTopBar(
-                shareEnabled = viewModel.isFormValid && !isSaving,
+                shareEnabled = !isVless && formValid && !isSaving,
                 onBack = onBack,
                 onShare = { onShareLocationRequested(viewModel.editingConfig) }
             )
@@ -143,7 +142,7 @@ fun LocationSettingsScreen(
                             .padding(horizontal = 24.dp, vertical = 16.dp),
                         showDelete = viewModel.editingId != null,
                         isSaving = isSaving,
-                        isFormValid = viewModel.isFormValid,
+                        isFormValid = formValid,
                         onDelete = {
                             viewModel.editingId?.let { id ->
                                 viewModel.deleteLocation(id) { onBack() }
@@ -161,7 +160,6 @@ fun LocationSettingsScreen(
             }
         }
     ) { innerPadding ->
-        // Keep focused fields composed while the IME or paste toolbar changes the viewport.
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -172,7 +170,7 @@ fun LocationSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SettingsTextField(
-                value = name,
+                value = viewModel.editingName,
                 onValueChange = viewModel::onNameChanged,
                 label = "Name",
                 placeholder = "Location name",
@@ -184,91 +182,312 @@ fun LocationSettingsScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
 
-            ConnectionTypePicker(
-                selectedProvider = config.bypassProvider,
-                serviceProvider = viewModel.editingServiceProvider,
-                enabled = !isSaving,
-                onProviderSelected = viewModel::onBypassProviderChanged
+            if (isAddMode) {
+                TransportTypePicker(
+                    isVless = isVless,
+                    enabled = !isSaving,
+                    onVlessSelected = {
+                        if (it) viewModel.switchToVlessEdit() else viewModel.switchToOlcrtcEdit()
+                    }
+                )
+            }
+
+            if (isVless) {
+                VlessEditorForm(viewModel = viewModel, isSaving = isSaving, homeViewModel = homeViewModel)
+            } else {
+                OlcrtcEditorForm(
+                    viewModel = viewModel,
+                    isSaving = isSaving,
+                    config = viewModel.editingConfig,
+                    homeViewModel = homeViewModel
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransportTypePicker(
+    isVless: Boolean,
+    enabled: Boolean,
+    onVlessSelected: (Boolean) -> Unit
+) {
+    val options = listOf(false, true)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionTitle(title = "Transport type")
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, vless ->
+                SegmentedButton(
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    selected = isVless == vless,
+                    onClick = { onVlessSelected(vless) },
+                    enabled = enabled,
+                    label = { Text(if (vless) "VLESS" else "olcrtc") }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VlessEditorForm(
+    viewModel: LocationViewModel,
+    isSaving: Boolean,
+    homeViewModel: HomeScreenViewModel
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        val vless = viewModel.editingVless
+        SettingsTextField(
+            value = vless.server,
+            onValueChange = viewModel::onVlessServerChanged,
+            label = "Server",
+            placeholder = "example.com",
+            enabled = !isSaving,
+            isError = viewModel.vlessServerError != null,
+            supportingText = viewModel.vlessServerError,
+            leadingIcon = Icons.Rounded.Public,
+            onClear = { viewModel.onVlessServerChanged("") },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Next
             )
+        )
 
-            if (!isJitsiProvider(config.bypassProvider)) {
-                ProviderPicker(
-                    selectedProvider = config.bypassProvider,
-                    enabled = !isSaving,
-                    onProviderSelected = viewModel::onBypassProviderChanged
-                )
-            }
+        NumericTextField(
+            value = vless.port,
+            label = "Port",
+            enabled = !isSaving,
+            onValueChange = viewModel::onVlessPortChanged,
+            modifier = Modifier.fillMaxWidth()
+        )
 
-            if (LocationConfig.supportedTransportsForProvider(config.bypassProvider).size > 1) {
-                TransportPicker(
-                    selectedProvider = config.bypassProvider,
-                    selectedTransport = config.transport,
-                    enabled = !isSaving,
-                    onTransportSelected = viewModel::onTransportChanged
-                )
-            }
+        SettingsTextField(
+            value = vless.uuid,
+            onValueChange = viewModel::onVlessUuidChanged,
+            label = "UUID",
+            placeholder = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            enabled = !isSaving,
+            isError = viewModel.vlessUuidError != null,
+            supportingText = viewModel.vlessUuidError,
+            leadingIcon = Icons.Rounded.Key,
+            onClear = { viewModel.onVlessUuidChanged("") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+        )
 
-            if (normalizedTransport == LocationConfig.TRANSPORT_VP8CHANNEL) {
-                Vp8OptionsCard(
-                    fps = config.vp8Fps,
-                    batch = config.vp8Batch,
-                    enabled = !isSaving,
-                    onFpsChanged = viewModel::onVp8FpsChanged,
-                    onBatchChanged = viewModel::onVp8BatchChanged
-                )
-            }
-
+        if (vless.security != VlessConfig.SECURITY_NONE) {
             SettingsTextField(
-                value = config.id,
-                onValueChange = viewModel::onServerChanged,
-                label = roomIdLabel(config.bypassProvider),
-                placeholder = roomIdPlaceholder(config.bypassProvider),
+                value = vless.flow ?: "",
+                onValueChange = { viewModel.onVlessFlowChanged(it) },
+                label = "Flow",
+                placeholder = "xtls-rprx-vision (optional)",
                 enabled = !isSaving,
-                isError = viewModel.serverError != null,
-                supportingText = viewModel.serverError,
-                leadingIcon = Icons.Rounded.MeetingRoom,
-                onClear = { viewModel.onServerChanged("") },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = roomKeyboardType(config.bypassProvider),
-                    imeAction = ImeAction.Next
-                )
-            )
-
-            SettingsTextField(
-                value = config.key,
-                onValueChange = viewModel::onPasswordChanged,
-                label = "Encryption key",
-                placeholder = "64 hex characters",
-                enabled = !isSaving,
-                isError = viewModel.keyError != null,
-                supportingText = viewModel.keyError,
+                isError = false,
+                supportingText = null,
                 leadingIcon = Icons.Rounded.Key,
-                onClear = { viewModel.onPasswordChanged("") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+                onClear = { viewModel.onVlessFlowChanged("") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
 
             SettingsTextField(
-                value = config.dnsServer,
-                onValueChange = viewModel::onDnsServerChanged,
-                label = "DNS server (optional)",
-                placeholder = "Auto, or 1.1.1.1:53",
+                value = vless.fingerprint ?: "",
+                onValueChange = { viewModel.onVlessFingerprintChanged(it) },
+                label = "Fingerprint",
+                placeholder = "firefox, chrome, etc. (optional)",
                 enabled = !isSaving,
-                isError = viewModel.dnsError != null,
-                supportingText = viewModel.dnsError,
-                leadingIcon = Icons.Rounded.Public,
-                onClear = { viewModel.onDnsServerChanged("") },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Done
-                )
-            )
-
-            PingButton(
-                homeViewModel = homeViewModel,
-                configGetter = { viewModel.editingConfig }
+                isError = false,
+                supportingText = null,
+                leadingIcon = Icons.Rounded.Key,
+                onClear = { viewModel.onVlessFingerprintChanged("") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
         }
+
+        SettingsDropdown(
+            label = "Network",
+            selectedValue = vless.network,
+            options = VlessConfig.supportedNetworks,
+            enabled = !isSaving,
+            onValueSelected = viewModel::onVlessNetworkChanged,
+            valueLabel = { it }
+        )
+
+        SettingsDropdown(
+            label = "Encryption / TLS",
+            selectedValue = vless.security,
+            options = VlessConfig.supportedSecurity,
+            enabled = !isSaving,
+            onValueSelected = viewModel::onVlessSecurityChanged,
+            valueLabel = { it }
+        )
+
+        if (vless.security != VlessConfig.SECURITY_NONE) {
+            SettingsTextField(
+                value = vless.sni ?: "",
+                onValueChange = { viewModel.onVlessSniChanged(it) },
+                label = "SNI / Host",
+                placeholder = "example.com",
+                enabled = !isSaving,
+                isError = viewModel.vlessTlsError != null,
+                supportingText = viewModel.vlessTlsError,
+                leadingIcon = Icons.Rounded.Public,
+                onClear = { viewModel.onVlessSniChanged("") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+            )
+        }
+
+        if (vless.network == VlessConfig.NETWORK_GRPC) {
+            SettingsTextField(
+                value = vless.grpcServiceName ?: "",
+                onValueChange = { viewModel.onVlessGrpcServiceChanged(it) },
+                label = "gRPC service name",
+                placeholder = "Leave empty for default",
+                enabled = !isSaving,
+                isError = false,
+                supportingText = null,
+                leadingIcon = Icons.Rounded.Public,
+                onClear = { viewModel.onVlessGrpcServiceChanged("") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+            )
+        }
+
+        SettingsTextField(
+            value = vless.path ?: "",
+            onValueChange = { viewModel.onVlessPathChanged(it) },
+            label = "Path",
+            placeholder = "Auto (empty)",
+            enabled = !isSaving,
+            isError = false,
+            supportingText = null,
+            leadingIcon = Icons.Rounded.Public,
+            onClear = { viewModel.onVlessPathChanged("") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = vless.allowInsecure,
+                onCheckedChange = { viewModel.onVlessAllowInsecureChanged(it) },
+                enabled = !isSaving
+            )
+            Text("Allow insecure TLS")
+        }
+
+        PingButton(
+            homeViewModel = homeViewModel,
+            vlessGetter = { viewModel.editingVless },
+            vlessPing = { vless, socksUsername, socksPassword ->
+                homeViewModel.performPingVless(vless, socksUsername, socksPassword)
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OlcrtcEditorForm(
+    viewModel: LocationViewModel,
+    isSaving: Boolean,
+    config: LocationConfig,
+    homeViewModel: HomeScreenViewModel
+) {
+    ConnectionTypePicker(
+        selectedProvider = config.bypassProvider,
+        serviceProvider = viewModel.editingServiceProvider,
+        enabled = !isSaving,
+        onProviderSelected = viewModel::onBypassProviderChanged
+    )
+
+    val normalizedTransport = LocationConfig.normalizeTransport(
+        config.transport,
+        config.bypassProvider
+    )
+    val isKeyboardVisibleHelper = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
+    if (!isJitsiProvider(config.bypassProvider)) {
+        ProviderPicker(
+            selectedProvider = config.bypassProvider,
+            enabled = !isSaving,
+            onProviderSelected = viewModel::onBypassProviderChanged
+        )
+    }
+
+    if (LocationConfig.supportedTransportsForProvider(config.bypassProvider).size > 1) {
+        TransportPicker(
+            selectedProvider = config.bypassProvider,
+            selectedTransport = config.transport,
+            enabled = !isSaving,
+            onTransportSelected = viewModel::onTransportChanged
+        )
+    }
+
+    if (normalizedTransport == LocationConfig.TRANSPORT_VP8CHANNEL) {
+        Vp8OptionsCard(
+            fps = config.vp8Fps,
+            batch = config.vp8Batch,
+            enabled = !isSaving,
+            onFpsChanged = viewModel::onVp8FpsChanged,
+            onBatchChanged = viewModel::onVp8BatchChanged
+        )
+    }
+
+    SettingsTextField(
+        value = config.id,
+        onValueChange = viewModel::onServerChanged,
+        label = roomIdLabel(config.bypassProvider),
+        placeholder = roomIdPlaceholder(config.bypassProvider),
+        enabled = !isSaving,
+        isError = viewModel.serverError != null,
+        supportingText = viewModel.serverError,
+        leadingIcon = Icons.Rounded.MeetingRoom,
+        onClear = { viewModel.onServerChanged("") },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = roomKeyboardType(config.bypassProvider),
+            imeAction = ImeAction.Next
+        )
+    )
+
+    SettingsTextField(
+        value = config.key,
+        onValueChange = viewModel::onPasswordChanged,
+        label = "Encryption key",
+        placeholder = "64 hex characters",
+        enabled = !isSaving,
+        isError = viewModel.keyError != null,
+        supportingText = viewModel.keyError,
+        leadingIcon = Icons.Rounded.Key,
+        onClear = { viewModel.onPasswordChanged("") },
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+    )
+
+    SettingsTextField(
+        value = config.dnsServer,
+        onValueChange = viewModel::onDnsServerChanged,
+        label = "DNS server (optional)",
+        placeholder = "Auto, or 1.1.1.1:53",
+        enabled = !isSaving,
+        isError = viewModel.dnsError != null,
+        supportingText = viewModel.dnsError,
+        leadingIcon = Icons.Rounded.Public,
+        onClear = { viewModel.onDnsServerChanged("") },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Done
+        )
+    )
+
+    if (!isKeyboardVisibleHelper) {
+        PingButton(
+            homeViewModel = homeViewModel,
+            configGetter = { viewModel.editingConfig }
+        )
     }
 }
 

@@ -18,8 +18,11 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.SubscriptionMetadata
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.model.formatSubscriptionRefreshInterval
 import org.olcbox.app.data.model.parseSubscriptionRefreshIntervalMs
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import org.olcbox.app.data.repository.LocationImportFailureKind
 import org.olcbox.app.data.repository.LocationImportResult
 import org.olcbox.app.data.share.ConfigShareService
@@ -1205,6 +1208,155 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf("https://example.test/a", "https://example.test/b"), items.map { it.url })
         assertEquals(2, items.first().locationCount)
         assertEquals("https://example.test/b", ConfigShareService.subscriptionQrText(items[1].url))
+    }
+
+    @Test
+    fun importsSingleVlessUriAsLocation() = runTest {
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val vlessUri =
+            "vless://2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f@vless.example:443" +
+                "?type=tcp&security=tls&sni=vless.example#VLESS%20Node"
+
+        val result = repository.importTextDetailed(vlessUri)
+
+        assertTrue(result is LocationImportResult.Success)
+        val locations = source.stored?.normalized()?.locations
+        assertEquals(1, locations?.size)
+        val entry = assertNotNull(locations?.single())
+        assertTrue(entry.isVless)
+        assertEquals("vless.example", entry.vless?.server)
+        assertEquals(443, entry.vless?.port)
+        assertEquals("2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f", entry.vless?.uuid)
+        assertEquals(VlessConfig.SECURITY_TLS, entry.vless?.security)
+        assertEquals("VLESS Node", entry.vless?.name)
+        assertEquals("vless.example:443", entry.vless?.serverEndpoint())
+    }
+
+    @Test
+    fun importsMixedOlcrtcAndVlessSubscription() = runTest {
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val key = "a".repeat(64)
+        val text = """
+            vless://2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f@vless.example:443?type=tcp&security=tls&sni=vless.example#VLESS
+            olcrtc://wbstream?vp8channel@room-a#$key${'$'}Olcrtc
+        """.trimIndent()
+
+        assertTrue(repository.importText(text))
+
+        val locations = assertNotNull(source.stored?.normalized()).locations
+        assertEquals(2, locations.size)
+        val vlessEntry = locations.single { it.isVless }
+        assertEquals("vless.example", vlessEntry.vless?.server)
+        val olcrtcEntry = locations.single { !it.isVless }
+        assertEquals("room-a", olcrtcEntry.location.id)
+        assertEquals(key, olcrtcEntry.location.key)
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    @Test
+    fun importsBase64EncodedVlessSubscription() = runTest {
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val plain = """
+            vless://2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f@sub.example:443?type=ws&security=tls&sni=sub.example&path=%2F&host=sub.example#B64
+            vless://3d3a2b3b-4c5e-6f70-8192-3a4b5c6d7e8f@sub.example:443?type=tcp&security=tls&sni=sub.example#B64b
+        """.trimIndent()
+        val encoded = Base64.encode(plain.encodeToByteArray())
+
+        assertTrue(repository.importText(encoded))
+
+        val locations = assertNotNull(source.stored?.normalized()).locations
+        assertEquals(2, locations.size)
+        assertTrue(locations.all { it.isVless })
+        assertEquals(
+            "2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f",
+            locations.single { it.vless?.name == "B64" }.vless?.uuid
+        )
+    }
+
+    @Test
+    fun vlessAndOlcrtcReuseStorageIdsOnReimport() = runTest {
+        val url = "https://example.test/mixed-sub"
+        val key = "a".repeat(64)
+        val body = """
+            vless://2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f@vless.example:443?type=tcp&security=tls&sni=vless.example#VLESS
+            olcrtc://wbstream?vp8channel@room-a#$key${'$'}Olcrtc
+        """.trimIndent()
+        val engine = MockEngine { respond(body) }
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source, HttpClient(engine))
+
+        repository.importTextDetailed(url)
+        val first = assertNotNull(source.stored?.normalized()).locations
+        val firstVlessId = first.single { it.isVless }.storageId
+        val firstOlcrtcId = first.single { !it.isVless }.storageId
+
+        repository.importTextDetailed(url)
+        val bundle = assertNotNull(source.stored?.normalized())
+        assertEquals(2, bundle.locations.size)
+        assertEquals(firstVlessId, bundle.locations.single { it.isVless }.storageId)
+        assertEquals(firstOlcrtcId, bundle.locations.single { !it.isVless }.storageId)
+    }
+
+    @Test
+    fun transportsOlcrtcVlessCoexistInBundle() = runTest {
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val vless = VlessConfig(
+            server = "vless.example",
+            port = 443,
+            uuid = "2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f",
+            name = "Vless",
+            network = VlessConfig.NETWORK_WS,
+            security = VlessConfig.SECURITY_TLS,
+            sni = "vless.example",
+            path = "/ws",
+            allowInsecure = true
+        )
+        repository.saveVlessLocation("vless-1", vless)
+        repository.saveLocation("olcrtc-1", LocationConfig("Olcrtc", "room-1", "a".repeat(64)))
+
+        val bundle = repository.getBundle().normalized()
+        assertEquals(2, bundle.locations.size)
+        val vlessEntry = bundle.locations.single { it.isVless }
+        val olcrtcEntry = bundle.locations.single { !it.isVless }
+        assertEquals("vless.example", vlessEntry.vless?.server)
+        assertEquals("room-1", olcrtcEntry.location.id)
+
+        val loaded = repository.loadVlessLocation("vless-1")
+        assertNotNull(loaded)
+        assertEquals(VlessConfig.NETWORK_WS, loaded.network)
+        assertTrue(loaded.allowInsecure)
+    }
+
+    @Test
+    fun exportedBundlePreservesVlessLocation() = runTest {
+        val source = FakeLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val vless = VlessConfig(
+            server = "vless.example",
+            port = 443,
+            uuid = "2d2a2b3a-4c5e-6f70-8192-3a4b5c6d7e8f",
+            name = "ExportedVless",
+            security = VlessConfig.SECURITY_TLS,
+            sni = "vless.example"
+        )
+        repository.saveVlessLocation("vless-1", vless)
+
+        val exported = repository.exportBundle()
+        assertTrue("\"vless\"" in exported)
+        assertTrue("ExportedVless" in exported)
+
+        val restoredSource = FakeLocationsDataSource()
+        LocationsRepositoryImpl(restoredSource).importText(exported)
+
+        val entry = restoredSource.stored?.normalized()?.locations?.single()
+        assertTrue(entry?.isVless == true)
+        assertEquals("vless.example", entry?.vless?.server)
+        assertEquals(443, entry?.vless?.port)
+        assertEquals("ExportedVless", entry?.vless?.name)
     }
 
     private class FakeLocationsDataSource(

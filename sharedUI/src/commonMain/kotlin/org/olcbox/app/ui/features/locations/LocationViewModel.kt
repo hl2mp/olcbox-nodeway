@@ -17,12 +17,15 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.repository.LocationsRepository
 
 data class LocationItem(
     val storageId: String,
     val fullName: String,
     val config: LocationConfig? = null,
+    val vless: VlessConfig? = null,
+    val isVless: Boolean = vless != null,
     val subscriptionUrl: String? = null,
     val metadata: LocationMetadata? = null
 )
@@ -88,6 +91,17 @@ class LocationViewModel(
     var dnsError by mutableStateOf<String?>(null)
         private set
 
+    var editingVless by mutableStateOf(VlessConfig())
+        private set
+
+    var isVlessEdit by mutableStateOf(false)
+        private set
+
+    var vlessServerError by mutableStateOf<String?>(null)
+    var vlessPortError by mutableStateOf<String?>(null)
+    var vlessUuidError by mutableStateOf<String?>(null)
+    var vlessTlsError by mutableStateOf<String?>(null)
+
     val isFormValid: Boolean
         get() = nameError == null &&
                 serverError == null &&
@@ -96,6 +110,16 @@ class LocationViewModel(
                 editingName.isNotBlank() &&
                 editingConfig.id.isNotBlank() &&
                 editingConfig.key.isNotBlank()
+
+    val isVlessFormValid: Boolean
+        get() = vlessServerError == null &&
+                vlessPortError == null &&
+                vlessUuidError == null &&
+                vlessTlsError == null &&
+                (editingName.isNotBlank() || editingVless.server.isNotBlank()) &&
+                editingVless.server.isNotBlank() &&
+                editingVless.port in 1..65535 &&
+                VlessConfig.isValidUuid(editingVless.uuid)
 
     init {
         loadLocations()
@@ -120,8 +144,12 @@ class LocationViewModel(
                 val normalized = entry.location
                 LocationItem(
                     storageId = entry.storageId,
-                    fullName = normalized.displayName(),
+                    fullName = entry.isVless
+                        .takeIf { it }?.let { entry.vless?.normalized()?.displayName() }
+                        ?: normalized.displayName(),
                     config = normalized,
+                    vless = entry.vless?.normalized(),
+                    isVless = entry.isVless,
                     subscriptionUrl = entry.subscriptionUrl,
                     metadata = entry.metadata
                 )
@@ -160,7 +188,6 @@ class LocationViewModel(
     fun selectLocation(id: String, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             locationsRepository.setActiveLocationId(id)
-            selectedLocationId = id
             onComplete()
         }
     }
@@ -168,7 +195,10 @@ class LocationViewModel(
     fun refreshPings(
         targetLocationIds: List<String>? = null,
         performPing: suspend (LocationConfig) -> Long?,
-        onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
+        performPingVless: suspend (VlessConfig, String, String) -> Long? = { _, _, _ -> null },
+        socksUsername: String = "",
+        socksPassword: String = "",
+        onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> Unit },
         onError: (String) -> Unit = {}
     ) {
         val previousPings = currentPingsSnapshot()
@@ -176,8 +206,13 @@ class LocationViewModel(
 
         val pingableLocations = locationsSnapshot
             .filter { location ->
-                location.config?.isComplete() == true &&
-                        (targetLocationIds == null || targetLocationIds.contains(location.storageId))
+                val isPingable = if (location.isVless) {
+                    location.vless?.isComplete() == true
+                } else {
+                    location.config?.isComplete() == true
+                }
+                isPingable &&
+                (targetLocationIds == null || targetLocationIds.contains(location.storageId))
             }
             .filterNot { location ->
                 activePingJobs.containsKey(location.storageId)
@@ -207,8 +242,17 @@ class LocationViewModel(
                 try {
                     val ping = try {
                         pingSemaphore.withPermit {
-                            checkLocationPing(location, performPing)?.toInt()
-                        }
+                            if (location.isVless) {
+                                checkLocationPingVless(
+                                    location = location,
+                                    performPingVless = performPingVless,
+                                    socksUsername = socksUsername,
+                                    socksPassword = socksPassword
+                                )
+                            } else {
+                                checkLocationPing(location, performPing)
+                            }
+                        }?.toInt()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -320,34 +364,153 @@ class LocationViewModel(
         }
     }
 
+    private suspend fun checkLocationPingVless(
+        location: LocationItem,
+        performPingVless: suspend (VlessConfig, String, String) -> Long?,
+        socksUsername: String,
+        socksPassword: String
+    ): Long? {
+        val config = location.vless ?: return null
+
+        return withTimeoutOrNull(LOCATION_PING_TIMEOUT_MS) {
+            repeat(LOCATION_PING_ATTEMPTS) { attempt ->
+                val result = try {
+                    performPingVless(config, socksUsername, socksPassword)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (result != null) {
+                    return@withTimeoutOrNull result
+                }
+
+                if (attempt < LOCATION_PING_ATTEMPTS - 1) {
+                    delay(LOCATION_PING_RETRY_DELAY_MS)
+                }
+            }
+
+            null
+        }
+    }
+
     fun startEditing(id: String?) {
         nameError = null
         serverError = null
         keyError = null
         dnsError = null
+        vlessServerError = null
+        vlessPortError = null
+        vlessUuidError = null
+        vlessTlsError = null
         isSaving = false
         providerDrafts.clear()
 
-        if (id == null) {
-            editingId = null
+        val location = id?.let { locations.find { entry -> entry.storageId == id } }
+
+        if (location != null && location.isVless) {
+            isVlessEdit = true
+            editingVless = location.vless?.normalized() ?: VlessConfig()
+            editingName = editingVless.name.takeIf { it.isNotBlank() } ?: editingVless.displayName()
             editingConfig = LocationConfig()
-            editingName = ""
+            editingId = id
+            editingServiceProvider = LocationConfig.DEFAULT_BYPASS_PROVIDER
         } else {
-            val location = locations.find { it.storageId == id }
+            isVlessEdit = false
+            editingVless = VlessConfig()
             editingId = id
             editingConfig = location?.config?.normalized() ?: LocationConfig()
             editingName = editingConfig.displayName()
+            val provider = LocationConfig.normalizeProvider(editingConfig.bypassProvider)
+            editingServiceProvider = if (provider == LocationConfig.PROVIDER_JITSI) {
+                LocationConfig.DEFAULT_BYPASS_PROVIDER
+            } else {
+                provider
+            }
+            providerDrafts[provider] = ProviderDraft(
+                room = editingConfig.id,
+                key = editingConfig.key
+            )
         }
-        val provider = LocationConfig.normalizeProvider(editingConfig.bypassProvider)
-        editingServiceProvider = if (provider == LocationConfig.PROVIDER_JITSI) {
-            LocationConfig.DEFAULT_BYPASS_PROVIDER
-        } else {
-            provider
+    }
+
+    fun switchToVlessEdit() {
+        isVlessEdit = true
+        if (editingName.isBlank() && editingVless.server.isNotBlank()) {
+            editingName = editingVless.displayName()
         }
-        providerDrafts[provider] = ProviderDraft(
-            room = editingConfig.id,
-            key = editingConfig.key
-        )
+        vlessServerError = null
+        vlessPortError = null
+        vlessUuidError = null
+        validateVlessTls(editingVless)
+    }
+
+    fun switchToOlcrtcEdit() {
+        isVlessEdit = false
+        nameError = null
+        serverError = null
+        keyError = null
+        dnsError = null
+    }
+
+    fun onVlessNameChanged(value: String) {
+        editingVless = editingVless.copy(name = value)
+    }
+
+    fun onVlessServerChanged(value: String) {
+        editingVless = editingVless.copy(server = value)
+        validateVlessServer(value)
+    }
+
+    fun onVlessPortChanged(value: String) {
+        val digits = value.filter { it.isDigit() }
+        val parsed = digits.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
+        editingVless = editingVless.copy(port = parsed)
+        validateVlessPort(digits)
+    }
+
+    fun onVlessUuidChanged(value: String) {
+        editingVless = editingVless.copy(uuid = value)
+        validateVlessUuid(value)
+    }
+
+    fun onVlessNetworkChanged(value: String) {
+        editingVless = editingVless.copy(network = VlessConfig.normalizeNetwork(value))
+    }
+
+    fun onVlessSecurityChanged(value: String) {
+        editingVless = editingVless.copy(security = VlessConfig.normalizeSecurity(value))
+        validateVlessTls(editingVless)
+    }
+
+    fun onVlessSniChanged(value: String) {
+        editingVless = editingVless.copy(sni = value.takeIf { it.isNotBlank() })
+        validateVlessTls(editingVless)
+    }
+
+    fun onVlessHostChanged(value: String) {
+        editingVless = editingVless.copy(host = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessPathChanged(value: String) {
+        editingVless = editingVless.copy(path = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessGrpcServiceChanged(value: String) {
+        editingVless = editingVless.copy(grpcServiceName = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessAllowInsecureChanged(value: Boolean) {
+        editingVless = editingVless.copy(allowInsecure = value)
+    }
+
+    fun onVlessFlowChanged(value: String) {
+        editingVless = editingVless.copy(flow = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessFingerprintChanged(value: String) {
+        editingVless = editingVless.copy(fingerprint = value.takeIf { it.isNotBlank() })
     }
 
     fun onNameChanged(value: String) {
@@ -359,8 +522,6 @@ class LocationViewModel(
         editingConfig = editingConfig.copy(id = value)
         validateServer(value)
     }
-
-    fun onSniChanged(value: String) = Unit
 
     fun onPasswordChanged(value: String) {
         editingConfig = editingConfig.copy(key = value)
@@ -462,7 +623,44 @@ class LocationViewModel(
         }
     }
 
+    private fun validateVlessServer(server: String) {
+        vlessServerError = when {
+            server.isBlank() -> "Server cannot be empty"
+            server.length > 256 -> "Server is too long"
+            else -> null
+        }
+    }
+
+    private fun validateVlessPort(raw: String) {
+        vlessPortError = when {
+            raw.isBlank() -> "Port cannot be empty"
+            raw.toIntOrNull() !in 1..65535 -> "Port must be 1–65535"
+            else -> null
+        }
+    }
+
+    private fun validateVlessUuid(uuid: String) {
+        vlessUuidError = when {
+            uuid.isBlank() -> "UUID cannot be empty"
+            !VlessConfig.isValidUuid(uuid) -> "Enter a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
+            else -> null
+        }
+    }
+
+    private fun validateVlessTls(config: VlessConfig) {
+        vlessTlsError = when {
+            config.security == VlessConfig.SECURITY_NONE -> null
+            config.sni != null || config.host != null -> null
+            else -> "Add SNI or Host for TLS"
+        }
+    }
+
     fun saveEditing(onComplete: () -> Unit) {
+        if (isVlessEdit) {
+            saveVlessEditing(onComplete)
+            return
+        }
+
         validateName(editingName)
         validateServer(editingConfig.id)
         validateKey(editingConfig.key)
@@ -490,6 +688,39 @@ class LocationViewModel(
         }
     }
 
+    private fun saveVlessEditing(onComplete: () -> Unit) {
+        validateName(editingName)
+        validateVlessServer(editingVless.server)
+        validateVlessPort(editingVless.port.toString())
+        validateVlessUuid(editingVless.uuid)
+        validateVlessTls(editingVless)
+
+        if (!isVlessFormValid || isSaving) {
+            onComplete()
+            return
+        }
+
+        viewModelScope.launch {
+            isSaving = true
+            try {
+                val id = editingId ?: "vless_${(100..999).random()}"
+                val name = if (editingName.isNotBlank()) editingName else editingVless.displayName()
+                val finalConfig = editingVless.copy(name = name).normalized()
+
+                locationsRepository.saveVlessLocation(id, finalConfig)
+                locationsRepository.setActiveLocationId(id)
+
+                loadLocations()
+
+                delay(600)
+
+                onComplete()
+            } finally {
+                isSaving = false
+            }
+        }
+    }
+
     fun deleteLocation(id: String, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             locationsRepository.deleteLocation(id)
@@ -498,9 +729,9 @@ class LocationViewModel(
     }
 
     private companion object {
-        const val LOCATION_PING_ATTEMPTS = 1
-        const val LOCATION_PING_TIMEOUT_MS = 12_000L
-        const val LOCATION_PING_RETRY_DELAY_MS = 0L
+        const val LOCATION_PING_ATTEMPTS = 2
+        const val LOCATION_PING_TIMEOUT_MS = 25_000L
+        const val LOCATION_PING_RETRY_DELAY_MS = 500L
         // Finish each location check before starting the next one.
         const val LOCATION_PING_PARALLELISM = 1
     }

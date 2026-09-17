@@ -89,6 +89,16 @@ fun LocationRow(
     val (emoji, parsedName) = parseEmojiAndName(rawName, fallbackIcon)
     val cleanName = parsedName.ifBlank { location.config?.displayName().orEmpty() }
     val description = metadata?.displayDescription()
+    val transportLabel = if (location.isVless) {
+        "VLESS"
+    } else {
+        val config = location.config
+        val providerName = config?.providerName()
+            ?: LocationConfig.providerDisplayName(LocationConfig.DEFAULT_BYPASS_PROVIDER)
+        val transportName = config?.transportName()
+            ?: LocationConfig.transportDisplayName(LocationConfig.DEFAULT_TRANSPORT)
+        "$providerName $transportName"
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -132,7 +142,7 @@ fun LocationRow(
             }
 
             Text(
-                text = locationSubtitle(location),
+                text = transportLabel,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
                 maxLines = 1,

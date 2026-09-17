@@ -42,6 +42,11 @@ import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.AndroidXrayEngine
+import org.olcbox.app.data.model.XrayConfig
+import org.olcbox.app.data.model.XrayEngine
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
@@ -63,6 +68,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
@@ -82,6 +88,9 @@ class OlcboxVpnService : VpnService() {
     private val tunnelMutex = Mutex()
     private val repository: LocationsRepository by lazy {
         LocationsRepositoryImpl(LocationsDataSourceImpl(applicationContext))
+    }
+    private val xrayEngine: XrayEngine by lazy {
+        AndroidXrayEngine(applicationContext)
     }
     private val deviceIdentityProvider by lazy {
         PersistentDeviceIdentityProvider(LocationsDataSourceImpl(applicationContext))
@@ -108,6 +117,8 @@ class OlcboxVpnService : VpnService() {
     private var lastMobileProvider: String? = null
     @Volatile
     private var lastJitsiStopCompletedAtMs = 0L
+    @Volatile
+    private var activeTransportWasVless = false
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2socksThread: Thread? = null
@@ -129,6 +140,7 @@ class OlcboxVpnService : VpnService() {
     private var splitTunnelMode = AndroidSplitTunnelMode.AllApps
     private var splitTunnelProxyApps = emptySet<String>()
     private var splitTunnelBypassApps = emptySet<String>()
+    private var preWarmSocket: Socket? = null
     private var socksProxy: AuthenticatedSocksProxy? = null
 
     private data class StartOptions(
@@ -228,8 +240,9 @@ class OlcboxVpnService : VpnService() {
 
                 is VpnStatus.Reconnecting -> {
                     if (isBenignWifiRefresh(previousTransport, nextTransport) &&
-                        olcRtcRuntime.isRunning &&
-                        canReconnectTransportInPlace()
+                        (olcRtcRuntime.isRunning || xrayEngine.isRunning) &&
+                        vpnInterface != null &&
+                        tun2socksThread?.isAlive == true
                     ) {
                         setStatus(VpnStatus.Connected)
                         updateNotification(connectedNotificationText())
@@ -438,17 +451,30 @@ class OlcboxVpnService : VpnService() {
 
                     val active = repository.getActiveLocation()
                     val location = active?.location?.normalized()
-                    if (location == null || !location.isComplete()) {
+                    addLog("startTunnel: active=${active?.storageId}, isVless=${active?.isVless}, locationNotNull=${location != null}")
+                    if (active == null) {
                         setStatus(VpnStatus.Error("No active location"))
                         updateNotification("Add a location first")
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                         return@withLock
                     }
+                    if (!active.isVless && !(location?.isComplete() == true)) {
+                        setStatus(VpnStatus.Error("No active location"))
+                        updateNotification("Add a location first")
+                        stopTransportProcesses(closeTun = true, waitForSocksPort = false)
+                        return@withLock
+                    }
+                    if (active.isVless && active.vless?.normalized()?.isComplete() != true) {
+                        setStatus(VpnStatus.Error("Incomplete VLESS config"))
+                        updateNotification("Complete VLESS config first")
+                        stopTransportProcesses(closeTun = true, waitForSocksPort = false)
+                        return@withLock
+                    }
 
-                    if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
-                        reconnectTransport(location, requestedGeneration)
+                    if (isMigration && !forceFullRestart && canReconnectTransportInPlace(active)) {
+                        reconnectTransport(active, requestedGeneration)
                     } else {
-                        startFullTunnel(location, requestedGeneration, isMigration, isRestart)
+                        startFullTunnel(active, requestedGeneration, isMigration, isRestart)
                     }
                 }
             } finally {
@@ -459,7 +485,7 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
-    private suspend fun reconnectTransport(location: LocationConfig, requestedGeneration: Long) {
+    private suspend fun reconnectTransport(active: LocationEntry, requestedGeneration: Long) {
         setStatus(VpnStatus.Reconnecting)
         updateNotification("Reconnecting...")
         val upstream = findActiveUpstreamNetwork()
@@ -473,15 +499,25 @@ class OlcboxVpnService : VpnService() {
         }
 
         updateUnderlyingNetwork(upstream)
-        stopMobileAndWait()
+        if (active.isVless) {
+            runCatching { xrayEngine.stopXray() }
+        } else {
+            stopMobileAndWait()
+        }
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return
 
-        if (startMobile(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
+        val connected = if (active.isVless) {
+            startXray(active, upstream, requestedGeneration, setErrorOnFailure = true)
+        } else {
+            startMobile(active.location.normalized(), upstream, requestedGeneration, setErrorOnFailure = true)
+        }
+        if (connected) {
             setStatus(VpnStatus.Connected)
             resetRecoveryState()
             updateNotification(connectedNotificationText())
             addLog("${activeModeLabel()} transport reconnected")
+            activeTransportWasVless = active.isVless
             startWatchdog()
         } else {
             updateUnderlyingNetwork(null)
@@ -492,7 +528,7 @@ class OlcboxVpnService : VpnService() {
     }
 
     private suspend fun startFullTunnel(
-        location: LocationConfig,
+        active: LocationEntry,
         requestedGeneration: Long,
         isMigration: Boolean,
         isRestart: Boolean
@@ -517,7 +553,12 @@ class OlcboxVpnService : VpnService() {
         }
         updateUnderlyingNetwork(upstream)
 
-        if (!startMobile(location, upstream, requestedGeneration, setErrorOnFailure = !isMigration)) {
+        val started = if (active.isVless) {
+            startXray(active, upstream, requestedGeneration, setErrorOnFailure = !isMigration)
+        } else {
+            startMobile(active.location.normalized(), upstream, requestedGeneration, setErrorOnFailure = !isMigration)
+        }
+        if (!started) {
             if (isMigration) {
                 updateUnderlyingNetwork(null)
                 setStatus(VpnStatus.Reconnecting)
@@ -553,6 +594,16 @@ class OlcboxVpnService : VpnService() {
         }
 
         vpnInterface = pfd
+        if (active.isVless && !xrayEngine.isRunning) {
+            addLog("ERROR: xray-client process died after TUN establishment")
+            stopTransportProcesses(closeTun = true)
+            setStatus(VpnStatus.Error("xray-client process died"))
+            updateNotification("Connection failed")
+            return
+        }
+        if (active.isVless) {
+            testSocksConnect("after TUN established", xraySocksPort())
+        }
         if (!startTun2socks(pfd)) {
             stopTransportProcesses(closeTun = true)
             return
@@ -565,6 +616,8 @@ class OlcboxVpnService : VpnService() {
         resetRecoveryState()
         updateNotification(connectedNotificationText())
         addLog("VPN tunnel established")
+        addLog("tun2socks thread alive: ${tun2socksThread?.isAlive == true}")
+        activeTransportWasVless = active.isVless
         startWatchdog()
     }
 
@@ -634,7 +687,7 @@ class OlcboxVpnService : VpnService() {
             }
             false
         } finally {
-            if (!keepProcessBound || !olcRtcRuntime.isRunning) {
+            if (!keepProcessBound || (!olcRtcRuntime.isRunning && !xrayEngine.isRunning)) {
                 unbindProcessFromNetwork()
             }
         }
@@ -665,7 +718,7 @@ class OlcboxVpnService : VpnService() {
         olcRtcRuntime.setDeviceID(deviceId)
         olcRtcRuntime.setDNS(resolveOlcRtcDnsServer(config.dnsServer))
         olcRtcRuntime.setSocksListenHost(socksListenHost)
-        olcRtcRuntime.setSocksPort(socksPort.toLong())
+        olcRtcRuntime.setSocksPort(socksListenPort.toLong())
         olcRtcRuntime.setSocksCredentials(socksUsername, socksPassword)
         olcRtcRuntime.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
     }
@@ -679,11 +732,19 @@ class OlcboxVpnService : VpnService() {
                 return false
             }
 
+            if (tun2socksThread?.isAlive == true || tun2socksStarted) {
+                addLog("tun2socks already running, stopping before restart")
+                stopTun2socks()
+            }
+
             val nativeFd = ParcelFileDescriptor.dup(pfd.fileDescriptor).detachFd()
             val configFile = writeTun2socksConfig()
+            addLog("tun2socks config: ${configFile.readText().replace("\\n".toRegex(), " ")}")
+            addLog("tun2socks nativeFd=$nativeFd")
             tun2socksStarted = true
             tun2socksStopRequested = false
             tun2socksThread = thread(name = "OlcboxTun2Socks", isDaemon = true) {
+                addLog("tun2socks thread started, calling startTun2socksNative")
                 try {
                     val result = startTun2socksNative(configFile.absolutePath, nativeFd)
                     if (OlcboxVpnState.status.value !is VpnStatus.Stopping && result != 0) {
@@ -730,7 +791,10 @@ class OlcboxVpnService : VpnService() {
     private fun applySplitTunneling(builder: Builder): Boolean {
         return when (splitTunnelMode) {
             AndroidSplitTunnelMode.AllApps -> {
-                addDisallowedApp(builder, packageName, "Olcbox")
+                val excluded = addDisallowedApp(builder, packageName, "Olcbox")
+                if (!excluded) {
+                    addLog("WARNING: Failed to exclude Olcbox app from TUN - app traffic may be captured")
+                }
                 addLog("Split tunneling: all apps use TUN")
                 true
             }
@@ -803,6 +867,15 @@ class OlcboxVpnService : VpnService() {
     private fun writeTun2socksConfig(): File {
         val file = File(filesDir, TUN2SOCKS_CONFIG_FILE_NAME)
 
+        val socksPort = if (xrayEngine.isRunning) xraySocksPort() else socksListenPort
+        val useAuth = socksUsername.isNotBlank() && socksPassword.isNotBlank()
+
+        val authBlock = if (useAuth) {
+            "\n              username: '$socksUsername'\n              password: '$socksPassword'"
+        } else {
+            ""
+        }
+
         file.writeText(
             """
             tunnel:
@@ -813,11 +886,8 @@ class OlcboxVpnService : VpnService() {
 
             socks5:
               address: ${socksConnectHost()}
-              port: $socksListenPort
-              udp: 'tcp'
-              pipeline: false
-              username: '$socksUsername'
-              password: '$socksPassword'
+              port: $socksPort
+              udp: 'tcp'$authBlock
 
             mapdns:
               address: $MAPDNS_ADDRESS
@@ -830,11 +900,11 @@ class OlcboxVpnService : VpnService() {
               task-stack-size: $TUN_TASK_STACK_SIZE
               tcp-buffer-size: $TUN_TCP_BUFFER_SIZE
               max-session-count: 1200
-              connect-timeout: 10000
+              connect-timeout: 30000
               tcp-read-write-timeout: 300000
               udp-read-write-timeout: 60000
               log-file: stderr
-              log-level: warn
+              log-level: debug
             """.trimIndent()
         )
         return file
@@ -848,16 +918,23 @@ class OlcboxVpnService : VpnService() {
         watchdogJob = scope.launch {
             while (isActive && OlcboxVpnState.status.value is VpnStatus.Connected) {
                 delay(WATCHDOG_INTERVAL_MS)
+                val activeLocation = repository.getActiveLocation()
                 when {
-                    !olcRtcRuntime.isRunning -> {
-                        addLog("Watchdog: olcRTC stopped")
-                        requestTransportRecovery("olcRTC stopped", fullRestart = false)
+                    !olcRtcRuntime.isRunning && !xrayEngine.isRunning -> {
+                        addLog("Watchdog: transport stopped")
+                        requestTransportRecovery("transport stopped", fullRestart = false)
                         return@launch
                     }
 
                     mode == AndroidConnectionMode.Tun && tun2socksThread?.isAlive != true -> {
                         addLog("Watchdog: tun2socks stopped")
                         requestTransportRecovery("tun2socks stopped", fullRestart = true)
+                        return@launch
+                    }
+
+                    mode == AndroidConnectionMode.Tun && activeLocation?.isVless == true && !isLocalSocksPortOpen(xraySocksPort()) -> {
+                        addLog("Watchdog: vless SOCKS5 port not accepting connections")
+                        requestTransportRecovery("vless SOCKS5 unavailable", fullRestart = true)
                         return@launch
                     }
 
@@ -978,6 +1055,10 @@ class OlcboxVpnService : VpnService() {
     ) {
         val tunThread = tun2socksThread
         stopAuthenticatedSocksProxy()
+        runCatching { preWarmSocket?.close() }
+        preWarmSocket = null
+        activeTransportWasVless = false
+        runCatching { xrayEngine.stopXray() }
         if (stopMobileBeforeTun) {
             stopMobile()
         }
@@ -990,14 +1071,18 @@ class OlcboxVpnService : VpnService() {
         if (tun2socksThread == tunThread) {
             tun2socksThread = null
         }
+        val hasXrayRunning = xrayEngine.isRunning
         if (waitForSocksPort) {
             if (stopMobileBeforeTun) {
-                waitForSocksPortReleased()
+                stopMobileSafe()
             } else {
                 stopMobileAndWait()
             }
+            if (hasXrayRunning) {
+                waitForSocksPortReleased()
+            }
         } else if (!stopMobileBeforeTun) {
-            stopMobile()
+            stopMobileSafe()
         }
         if (closeTun) {
             unbindProcessFromNetwork()
@@ -1026,6 +1111,180 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
+    private suspend fun startXray(
+        active: LocationEntry,
+        upstream: Network,
+        requestedGeneration: Long,
+        setErrorOnFailure: Boolean
+    ): Boolean {
+        val keepProcessBound = true
+        val vless = active.vless?.normalized() ?: return false
+        return try {
+            val targetSocksPort = xraySocksPort()
+            waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
+            if (isLocalSocksPortOpen(targetSocksPort)) {
+                throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
+            }
+            bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
+            coroutineContext.ensureActive()
+
+            val upstreamDnsServer = findUpstreamDnsServer()
+            addLog("Using DNS server $upstreamDnsServer for xray")
+            val resolvedIp = resolveServerName(vless.server, upstreamDnsServer)
+            if (resolvedIp != null) {
+                addLog("Resolved ${vless.server} -> $resolvedIp (pre-resolve for vless-client to avoid TUN capture)")
+            } else {
+                addLog("Could not pre-resolve ${vless.server}, using hostname as-is")
+            }
+            val vlessLink = vless.toUri(resolvedIp)
+            addLog("vless link: $vlessLink")
+
+            val config = XrayConfig(
+                vlessLink = vlessLink,
+                listenPort = targetSocksPort,
+                dnsServer = upstreamDnsServer,
+                networkHandle = currentNetwork?.networkHandle,
+                onLogEntry = { line -> addLog("xray: $line") },
+                socksUsername = socksUsername,
+                socksPassword = socksPassword
+            )
+            addLog("Starting xray server=${vless.server}:${vless.port}, network=${vless.network}, security=${vless.security}")
+            val startResult = xrayEngine.startXray(config)
+            if (startResult.isFailure) {
+                val message = startResult.exceptionOrNull()?.message ?: "xray start failed"
+                val staleRequest = requestedGeneration != generation
+                addLog("xray start failed: $message")
+                if (!staleRequest && setErrorOnFailure) {
+                    setStatus(VpnStatus.Error(message))
+                    updateNotification("Connection failed")
+                }
+                return false
+            }
+            if (requestedGeneration != generation) {
+                addLog("xray start superseded")
+                return false
+            }
+            coroutineContext.ensureActive()
+            addLog("xray ready on $socksListenHost:$targetSocksPort")
+
+            preWarmVlessConnection(targetSocksPort)
+
+            markRtcConnected()
+            if (keepProcessBound) {
+                addLog("Keeping xray bound to ${getNetName(upstream)}")
+            }
+            true
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                addLog("xray start canceled")
+                unbindProcessFromNetwork()
+                runCatching { xrayEngine.stopXray() }
+            }
+            throw e
+        } catch (e: Exception) {
+            val staleRequest = requestedGeneration != generation
+            val message = e.message ?: "xray start failed"
+            if (staleRequest) {
+                addLog("xray start canceled: $message")
+            } else {
+                addLog("xray start failed: $message")
+            }
+            unbindProcessFromNetwork()
+            runCatching { xrayEngine.stopXray() }
+            if (!staleRequest && setErrorOnFailure) {
+                setStatus(VpnStatus.Error(message))
+                updateNotification("Connection failed")
+            }
+            false
+        } finally {
+            if (!keepProcessBound || !xrayEngine.isRunning) {
+                unbindProcessFromNetwork()
+            }
+        }
+    }
+
+    private suspend fun preWarmVlessConnection(
+        socksPort: Int
+    ) {
+        addLog("Pre-warming VLESS connection via SOCKS $socksListenHost:$socksPort (before TUN)")
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val sock = Socket()
+                sock.connect(InetSocketAddress(socksListenHost, socksPort), 5000)
+                val input = DataInputStream(sock.getInputStream())
+                val output = DataOutputStream(sock.getOutputStream())
+
+                val useAuth = socksUsername.isNotBlank() && socksPassword.isNotBlank()
+                if (useAuth) {
+                    output.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
+                } else {
+                    output.write(byteArrayOf(0x05, 0x01, 0x00))
+                }
+                output.flush()
+
+                if (input.readUnsignedByte() != 0x05) {
+                    addLog("Pre-warm: SOCKS5 version mismatch")
+                    sock.close()
+                    return@runCatching
+                }
+                val method = input.readUnsignedByte()
+                if (method != 0x00 && method != 0x02) {
+                    addLog("Pre-warm: SOCKS5 unsupported method (method=$method)")
+                    sock.close()
+                    return@runCatching
+                }
+                if (useAuth && method == 0x02) {
+                    val userBytes = socksUsername.toByteArray()
+                    val passBytes = socksPassword.toByteArray()
+                    output.write(0x01)
+                    output.write(userBytes.size)
+                    output.write(userBytes)
+                    output.write(passBytes.size)
+                    output.write(passBytes)
+                    output.flush()
+
+                    if (input.readUnsignedByte() != 0x01) {
+                        addLog("Pre-warm: SOCKS5 auth version mismatch")
+                        sock.close()
+                        return@runCatching
+                    }
+                    if (input.readUnsignedByte() != 0x00) {
+                        addLog("Pre-warm: SOCKS5 auth rejected")
+                        sock.close()
+                        return@runCatching
+                    }
+                }
+
+                val warmTarget = "1.1.1.1"
+                val warmPort = 443
+                val targetBytes = warmTarget.toByteArray(Charsets.US_ASCII)
+                output.write(byteArrayOf(0x05, 0x01, 0x00, 0x03, targetBytes.size.toByte()))
+                output.write(targetBytes)
+                output.writeShort(warmPort)
+                output.flush()
+
+                val ver = input.readUnsignedByte()
+                val reply = input.readUnsignedByte()
+                input.readUnsignedByte()
+                val addrType = input.readUnsignedByte()
+                when (addrType) {
+                    0x01 -> input.readFully(ByteArray(4))
+                    0x03 -> { val len = input.readUnsignedByte(); input.readFully(ByteArray(len)) }
+                    0x04 -> input.readFully(ByteArray(16))
+                }
+                input.readUnsignedShort()
+
+                if (ver == 0x05 && reply == 0x00) {
+                    addLog("Pre-warm: VLESS tunnel established (SOCKS5 CONNECT to $warmTarget:$warmPort) before TUN, keeping socket alive")
+                    preWarmSocket = sock
+                } else {
+                    addLog("Pre-warm: SOCKS5 CONNECT failed (reply=$reply)")
+                    sock.close()
+                }
+            }.onFailure { addLog("Pre-warm: ${it.message}") }
+        }
+    }
+
     private fun stopAuthenticatedSocksProxy() {
         socksProxy?.stop()
         socksProxy = null
@@ -1033,8 +1292,16 @@ class OlcboxVpnService : VpnService() {
 
     private suspend fun stopMobileAndWait() {
         val socksPort = socksListenPort
-        stopMobile()
+        stopMobileSafe()
         waitForSocksPortReleased(socksPort)
+    }
+
+    private suspend fun stopMobileSafe() {
+        if (xrayEngine.isRunning) {
+            runCatching { xrayEngine.stopXray() }
+        } else {
+            stopMobile()
+        }
     }
 
     private suspend fun waitForSocksPortReleased(
@@ -1060,9 +1327,22 @@ class OlcboxVpnService : VpnService() {
         }.isSuccess
     }
 
+    private fun testSocksConnect(label: String, port: Int = socksListenPort) {
+        runCatching {
+            val socket = Socket()
+            socket.connect(InetSocketAddress("127.0.0.1", port), SOCKET_CONNECT_TIMEOUT_MS)
+            addLog("SOCKS test ($label): connected to 127.0.0.1:$port OK")
+            socket.close()
+        }.onFailure {
+            addLog("SOCKS test ($label): connect failed: ${it.message}")
+        }
+    }
+
     private fun socksConnectHost(): String {
         return AndroidSocksProxySettings.connectHost(socksListenHost)
     }
+
+    private fun xraySocksPort(): Int = socksListenPort + XRAY_SOCKS_PORT_OFFSET
 
     private fun handleRtcLine(line: String) {
         val lowerLine = line.lowercase()
@@ -1152,7 +1432,7 @@ class OlcboxVpnService : VpnService() {
 
         val txDelta = stats.txPackets - previous.txPackets
         val rxDelta = stats.rxPackets - previous.rxPackets
-        if (txDelta >= WATCHDOG_STALLED_TX_PACKET_DELTA && rxDelta <= 0L && olcRtcRuntime.isRunning) {
+        if (txDelta >= WATCHDOG_STALLED_TX_PACKET_DELTA && rxDelta <= 0L && (olcRtcRuntime.isRunning || xrayEngine.isRunning)) {
             watchdogStalledSamples++
         } else if (rxDelta > 0L || txDelta <= 0L) {
             watchdogStalledSamples = 0
@@ -1285,10 +1565,13 @@ class OlcboxVpnService : VpnService() {
         vpnInterface = null
     }
 
-    private fun canReconnectTransportInPlace(): Boolean {
-        return when (connectionMode) {
-            AndroidConnectionMode.Tun -> vpnInterface != null && tun2socksThread?.isAlive == true
-            AndroidConnectionMode.Proxy -> olcRtcRuntime.isRunning
+    private fun canReconnectTransportInPlace(active: LocationEntry): Boolean {
+        if (connectionMode == AndroidConnectionMode.Tun) {
+            if (vpnInterface == null || tun2socksThread?.isAlive != true) return false
+            if (activeTransportWasVless != active.isVless) return false
+            return true
+        } else {
+            return olcRtcRuntime.isRunning || xrayEngine.isRunning
         }
     }
 
@@ -1306,7 +1589,8 @@ class OlcboxVpnService : VpnService() {
             vpnInterface != null ||
             tun2socksThread != null ||
             socksProxy != null ||
-            olcRtcRuntime.isRunning
+            olcRtcRuntime.isRunning ||
+            xrayEngine.isRunning
     }
 
     private fun registerNetworkMonitor() {
@@ -1359,6 +1643,34 @@ class OlcboxVpnService : VpnService() {
         val source = if (upstreamDnsServer != null) "upstream" else "fallback"
         addLog("Using $source DNS server $selectedDnsServer for olcRTC signaling")
         return selectedDnsServer
+    }
+
+    private fun findUpstreamDnsServer(): String? {
+        return currentNetwork
+            ?.let(connectivityManager::getLinkProperties)
+            ?.dnsServers
+            ?.asSequence()
+            ?.filterNot { it.isAnyLocalAddress || it.isLoopbackAddress || it.isMulticastAddress }
+            ?.sortedBy { it.address.size }
+            ?.mapNotNull { it.hostAddress }
+            ?.firstOrNull()
+    }
+
+    private suspend fun resolveServerName(server: String, dnsServer: String?): String? = withContext(Dispatchers.IO) {
+        if (server.isEmpty()) return@withContext null
+        if (server.matches(Regex("^[0-9]+(\\.[0-9]+){3}$")) || server.startsWith("[")) {
+            return@withContext server
+        }
+        try {
+            val inetAddress = java.net.InetAddress.getByName(server)
+            val resolved = inetAddress.hostAddress
+            if (resolved != null) {
+                resolved
+            } else null
+        } catch (e: Exception) {
+            addLog("DNS resolution failed for $server: ${e.message}")
+            null
+        }
     }
 
     private fun dnsEndpoint(address: String): String {
@@ -1696,8 +2008,8 @@ class OlcboxVpnService : VpnService() {
         private const val MOBILE_STOP_TIMEOUT_MS = 5_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
-        private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
-        private const val TUNNEL_HANDOFF_DELAY_MS = 300L
+        const val TUN2SOCKS_STOP_WAIT_MS = 10_000L
+        private const val TUNNEL_HANDOFF_DELAY_MS = 1000L
         private const val NETWORK_LOSS_GRACE_MS = 2_500L
         private const val NETWORK_STABILITY_GRACE_MS = 1_500L
         private const val WATCHDOG_INTERVAL_MS = 15_000L
@@ -1715,7 +2027,8 @@ class OlcboxVpnService : VpnService() {
         private const val SOCKS_RELEASE_TIMEOUT_MS = 2_500L
         private const val SOCKS_RELEASE_QUICK_TIMEOUT_MS = 500L
         private const val SOCKS_RELEASE_POLL_MS = 100L
-        private const val SOCKET_CONNECT_TIMEOUT_MS = 150
+        private         const val SOCKET_CONNECT_TIMEOUT_MS = 150
+        const val XRAY_SOCKS_PORT_OFFSET = 1
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = 30_000L
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 1000L
         private const val TUN_MTU = 1500

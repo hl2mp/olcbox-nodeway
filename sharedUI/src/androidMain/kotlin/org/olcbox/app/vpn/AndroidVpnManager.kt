@@ -23,6 +23,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
@@ -259,6 +260,28 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid()
         )
+    }
+
+    override suspend fun pingVless(
+        vlessConfig: VlessConfig,
+        socksUsername: String,
+        socksPassword: String
+    ): Long? {
+        return XrayConnectionChecker.ping(
+            context = context,
+            vlessConfig = vlessConfig,
+            socksUsername = socksUsername,
+            socksPassword = socksPassword
+        )
+    }
+
+    override fun socksCredentials(): Pair<String, String>? {
+        val proxy = _proxySettings.value
+        return if (proxy.username.isNotBlank() && proxy.password.isNotBlank()) {
+            Pair(proxy.username, proxy.password)
+        } else {
+            null
+        }
     }
 
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {

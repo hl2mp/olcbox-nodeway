@@ -30,6 +30,8 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.SubscriptionMetadata
+import org.olcbox.app.data.model.VlessConfig
+import org.olcbox.app.data.model.VlessUri
 import org.olcbox.app.data.model.parseSubscriptionRefreshIntervalMs
 import org.olcbox.app.data.repository.LocationImportFailureKind
 import org.olcbox.app.data.repository.LocationImportResult
@@ -408,9 +410,37 @@ class LocationsRepositoryImpl(
         }
     }
 
+    override suspend fun saveVlessLocation(storageId: String, vless: VlessConfig) {
+        mutationMutex.withLock {
+            val normalizedId = storageId.ifBlank { vless.normalized().serverEndpoint().storageSlug() }
+            val bundle = getBundleUnlocked()
+            val current = bundle.locations.firstOrNull { it.storageId == normalizedId }
+            val entry = LocationEntry.fromVless(
+                storageId = normalizedId,
+                vless = vless,
+                subscriptionUrl = current?.subscriptionUrl,
+                metadata = current?.metadata
+            )
+            val locations = bundle.locations
+                .filterNot { it.storageId == entry.storageId } + entry
+            saveBundleUnlocked(
+                bundle.copy(
+                    activeLocationId = entry.storageId,
+                    locations = locations
+                )
+            )
+        }
+    }
+
     override suspend fun loadLocation(storageId: String): LocationConfig? {
         return mutationMutex.withLock {
             getBundleUnlocked().locations.firstOrNull { it.storageId == storageId }?.location
+        }
+    }
+
+    override suspend fun loadVlessLocation(storageId: String): VlessConfig? {
+        return mutationMutex.withLock {
+            getBundleUnlocked().locations.firstOrNull { it.storageId == storageId }?.vless?.normalized()
         }
     }
 
@@ -492,7 +522,7 @@ class LocationsRepositoryImpl(
         if (input.looksLikeUnsupportedUrl()) {
             return ResolvedImportResult.Failure(
                 LocationImportFailureKind.InvalidUrl,
-                "Only HTTP, HTTPS, and olcrtc URIs are supported"
+                "Only HTTP, HTTPS, olcrtc, and vless URIs are supported"
             )
         }
         if (input.isHttpUrl() && !input.isValidHttpUrl()) {
@@ -745,7 +775,8 @@ class LocationsRepositoryImpl(
         return startsWithScheme &&
                 !value.startsWith("http://", ignoreCase = true) &&
                 !value.startsWith("https://", ignoreCase = true) &&
-                !value.startsWith(OLCRTC_URI_PREFIX, ignoreCase = true)
+                !value.startsWith(OLCRTC_URI_PREFIX, ignoreCase = true) &&
+                !value.startsWith(VlessUri.PREFIX, ignoreCase = true)
     }
 
     private fun ImportSourceResult.Failure.toResolvedFailure(): ResolvedImportResult.Failure {
@@ -804,6 +835,10 @@ class LocationsRepositoryImpl(
     ): ParsedImport? {
         parseOlcRtcText(text, subscriptionUrl, updateIntervalMs)?.let {
             return ParsedImport(it, ImportMode.Additive)
+        }
+
+        parseSubscriptionText(text, subscriptionUrl, updateIntervalMs)?.let {
+            return it
         }
 
         if (!text.startsWith("{") || !text.endsWith("}")) return null
@@ -906,14 +941,14 @@ class LocationsRepositoryImpl(
         }
         val usedStorageIds = currentBundle.locations.mapTo(mutableSetOf()) { it.storageId }
         val previousBySignature = previousEntries
-            .groupBy { subscriptionSignature(it.location) }
+            .groupBy { it.subscriptionSignature() }
             .mapValues { (_, entries) -> entries.toMutableList() }
         val manualInterval = previousEntries.firstNotNullOfOrNull {
             it.metadata?.subscription?.manualUpdateIntervalMs
         }
 
         val updatedEntries = imported.locations.mapIndexed { index, entry ->
-            val previousPool = previousBySignature[subscriptionSignature(entry.location)]
+            val previousPool = previousBySignature[entry.subscriptionSignature()]
             val previousEntry = if (previousPool.isNullOrEmpty()) {
                 null
             } else {
@@ -1107,6 +1142,7 @@ class LocationsRepositoryImpl(
         subscriptionUrl: String? = null,
         updateIntervalMs: Long? = null
     ): LocationBundleV4? {
+        if (text.contains(VlessUri.PREFIX, ignoreCase = true)) return null
         if (!text.contains(OLCRTC_URI_PREFIX)) return null
 
         val subscriptionFields = linkedMapOf<String, String>()
@@ -1177,6 +1213,140 @@ class LocationsRepositoryImpl(
             activeLocationId = entries.firstOrNull()?.storageId,
             locations = entries
         )
+    }
+
+    private fun parseSubscriptionText(
+        text: String,
+        subscriptionUrl: String? = null,
+        updateIntervalMs: Long? = null
+    ): ParsedImport? {
+        val input = text.normalizedImportText()
+        if (input.isEmpty()) return null
+
+        val candidate = if (
+            input.contains(VlessUri.PREFIX, ignoreCase = true) ||
+            input.contains(OLCRTC_URI_PREFIX)
+        ) {
+            input
+        } else {
+            VlessUri.decodeBase64(input) ?: return null
+        }
+
+        if (!candidate.contains(VlessUri.PREFIX, ignoreCase = true) &&
+            !candidate.contains(OLCRTC_URI_PREFIX)
+        ) {
+            return null
+        }
+
+        val subscriptionFields = linkedMapOf<String, String>()
+        val parsedLocations = mutableListOf<ParsedLocation>()
+        var localFields: MutableMap<String, String>? = null
+
+        candidate.lineSequence()
+            .map { it.normalizedImportText() }
+            .filter { it.isNotBlank() }
+            .forEach { line ->
+                when {
+                    line.startsWith(OLCRTC_URI_PREFIX) -> {
+                        parseOlcRtcUri(line)?.let { parsed ->
+                            localFields = linkedMapOf()
+                            parsedLocations += ParsedLocation.OlcRtc(parsed, localFields!!)
+                        }
+                    }
+
+                    line.startsWith(VlessUri.PREFIX, ignoreCase = true) -> {
+                        VlessUri.parse(line)?.let { vless ->
+                            localFields = linkedMapOf()
+                            parsedLocations += ParsedLocation.Vless(vless, localFields!!)
+                        }
+                    }
+
+                    line.startsWith("##") && localFields != null -> {
+                        val (key, value) = parseSubscriptionField(line.removePrefix("##")) ?: return@forEach
+                        localFields?.set(key, value)
+                    }
+
+                    line.startsWith("#") -> {
+                        val (key, value) = parseSubscriptionField(line.removePrefix("#")) ?: return@forEach
+                        subscriptionFields[key] = value
+                    }
+                }
+            }
+
+        if (parsedLocations.isEmpty()) return null
+
+        val subscriptionMetadata = buildSubscriptionMetadata(subscriptionFields)
+            .withSubscriptionInterval(updateIntervalMs)
+        val usedStorageIds = mutableSetOf<String>()
+
+        val entries = parsedLocations.mapIndexed { index, item ->
+            when (item) {
+                is ParsedLocation.OlcRtc -> {
+                    val metadata = buildLocationMetadata(
+                        fields = item.fields,
+                        mimo = item.parsed.mimo,
+                        subscription = subscriptionMetadata
+                    )
+                    val location = item.parsed.location.copy(
+                        name = firstNotBlank(
+                            metadata?.name,
+                            item.parsed.mimo,
+                            item.parsed.location.name
+                        )
+                    ).normalized()
+                    val base = location.storageSlug().ifBlank { "location_${index + 1}" }
+                    val storageId = uniqueStorageId("imported_$base", usedStorageIds)
+                    LocationEntry.from(
+                        storageId = storageId,
+                        location = location,
+                        subscriptionUrl = subscriptionUrl,
+                        metadata = metadata
+                    )
+                }
+
+                is ParsedLocation.Vless -> {
+                    val metadata = buildLocationMetadata(
+                        fields = item.fields,
+                        mimo = null,
+                        subscription = subscriptionMetadata
+                    )
+                    val config = item.vless.normalized()
+                    val name = firstNotBlank(
+                        metadata?.name,
+                        config.name,
+                        config.displayName()
+                    )
+                    val base = name.storageSlug().ifBlank { "location_${index + 1}" }
+                    val storageId = uniqueStorageId("imported_$base", usedStorageIds)
+                    LocationEntry.fromVless(
+                        storageId = storageId,
+                        vless = config.copy(name = name),
+                        subscriptionUrl = subscriptionUrl,
+                        metadata = metadata
+                    )
+                }
+            }
+        }
+
+        return ParsedImport(
+            LocationBundleV4(
+                activeLocationId = entries.firstOrNull()?.storageId,
+                locations = entries
+            ),
+            ImportMode.Additive
+        )
+    }
+
+    private sealed interface ParsedLocation {
+        data class OlcRtc(
+            val parsed: ParsedOlcRtcUri,
+            val fields: MutableMap<String, String>
+        ) : ParsedLocation
+
+        data class Vless(
+            val vless: VlessConfig,
+            val fields: MutableMap<String, String>
+        ) : ParsedLocation
     }
 
     private fun parseOlcRtcUri(line: String): ParsedOlcRtcUri? {
@@ -1320,18 +1490,8 @@ class LocationsRepositoryImpl(
                     }
                 }
                 .normalized()
-                .takeIf { it.location.isComplete() }
+                .takeIf { it.isComplete }
         }.getOrNull()
-    }
-
-    private fun subscriptionSignature(location: LocationConfig): String {
-        val normalized = location.normalized()
-        return listOf(
-            normalized.bypassProvider,
-            normalized.transport,
-            normalized.id,
-            normalized.key
-        ).joinToString("|")
     }
 
     private fun LocationConfig.storageSlug(): String {

@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.VlessConfig
 
 interface LocationsRepository {
     val changes: StateFlow<Long>
@@ -36,7 +37,9 @@ interface LocationsRepository {
     suspend fun setSubscriptionUpdateInterval(subscriptionUrl: String, intervalMs: Long?)
     suspend fun deleteSubscription(subscriptionUrl: String): Int
     suspend fun saveLocation(storageId: String, location: LocationConfig)
+    suspend fun saveVlessLocation(storageId: String, vless: VlessConfig)
     suspend fun loadLocation(storageId: String): LocationConfig?
+    suspend fun loadVlessLocation(storageId: String): VlessConfig?
     suspend fun deleteLocation(storageId: String)
     suspend fun getAllLocations(): List<LocationEntry>
     suspend fun getActiveLocationId(): String?

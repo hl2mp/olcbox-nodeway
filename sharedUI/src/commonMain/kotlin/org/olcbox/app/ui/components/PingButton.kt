@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 
 sealed class PingState {
@@ -47,7 +48,9 @@ sealed class PingState {
 fun PingButton(
     modifier: Modifier = Modifier,
     homeViewModel: HomeScreenViewModel,
-    configGetter: () -> LocationConfig? = { null }
+    configGetter: () -> LocationConfig? = { null },
+    vlessGetter: () -> VlessConfig? = { null },
+    vlessPing: suspend (VlessConfig, String, String) -> Long? = { _, _, _ -> null }
 ) {
     var pingState by remember { mutableStateOf<PingState>(PingState.Idle) }
 
@@ -98,7 +101,14 @@ fun PingButton(
                 homeViewModel.viewModelScope.launch {
                     pingState = PingState.Loading
                     val config = configGetter()
-                    val result = if (config != null) {
+                    val result = if (vlessGetter() != null) {
+                        val creds = homeViewModel.getSocksCredentials()
+                        homeViewModel.performPingVless(
+                            vlessGetter()!!,
+                            creds?.first ?: "",
+                            creds?.second ?: ""
+                        )
+                    } else if (config != null) {
                         homeViewModel.performPingFor(config)
                     } else {
                         homeViewModel.performPing()
