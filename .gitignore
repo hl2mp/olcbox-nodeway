@@ -41,5 +41,6 @@ obj/
 bin/
 keystore.properties
 release-keystore.jks
+release.keystore
 .!80165!.DS_Store
 .zed

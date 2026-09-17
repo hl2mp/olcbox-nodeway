@@ -118,12 +118,21 @@ val desktopPackageName = "Olcbox"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
 val tun2SocksVersion = "2.6.0"
 val wintunVersion = "0.14.1"
-val currentBuildTargetFormats = when {
-    currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
-    currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
-    currentBuildOs.isLinux -> arrayOf(TargetFormat.AppImage)
-    else -> emptyArray()
-}
+val desktopTargetOsName = providers.gradleProperty("olcbox.desktopTargetOs").orElse(currentBuildOs.name).get()
+    val desktopTargetOs = when (desktopTargetOsName.lowercase()) {
+        "windows" -> OperatingSystem.WINDOWS
+        "macos", "mac", "darwin" -> OperatingSystem.MAC_OS
+        "linux" -> OperatingSystem.LINUX
+        else -> currentBuildOs
+    }
+    val currentBuildTargetFormats = when {
+        providers.gradleProperty("olcbox.desktopTargetFormats").orElse("").get().let { it.isNotBlank() } ->
+            providers.gradleProperty("olcbox.desktopTargetFormats").get().split(",").map { TargetFormat.valueOf(it) }.toTypedArray()
+        desktopTargetOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
+        desktopTargetOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
+        desktopTargetOs.isLinux -> arrayOf(TargetFormat.AppImage)
+        else -> emptyArray()
+    }
 
 fun desktopArchName(arch: String): String = when (arch.lowercase()) {
     "x86_64", "amd64" -> "amd64"
@@ -186,7 +195,7 @@ fun registerOlcRtcLibraryBuildTask(
     workingDir = olcrtcRepoDir.get()
     environment("GOOS", goos)
     environment("GOARCH", goarch)
-    environment("CGO_ENABLED", "1")
+    environment("CGO_ENABLED", if (goos == "windows") "0" else "1")
     commandLine(
         "go",
         "build",
@@ -283,13 +292,12 @@ val desktopNativeAssetTasks = mutableListOf<Any>(
     buildOlcRtcLibDarwinArm64,
     buildOlcRtcLibDarwinAmd64,
     buildOlcRtcLibLinuxAmd64,
-    buildOlcRtcLibLinuxArm64,
-    buildOlcRtcLibWindowsAmd64
+    buildOlcRtcLibLinuxArm64
 )
 val hostDesktopNativeAssetTasks = mutableListOf<Any>()
 
 when {
-    currentBuildOs.isMacOsX -> when (hostDesktopArch) {
+    desktopTargetOs.isMacOsX -> when (hostDesktopArch) {
         "amd64" -> {
             hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
             hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinAmd64)
@@ -299,11 +307,11 @@ when {
             hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
         }
     }
-    currentBuildOs.isWindows -> {
+    desktopTargetOs.isWindows -> {
         hostDesktopNativeAssetTasks.add(buildOlcRtcWindowsAmd64)
         hostDesktopNativeAssetTasks.add(buildOlcRtcLibWindowsAmd64)
     }
-    currentBuildOs.isLinux -> when (hostDesktopArch) {
+    desktopTargetOs.isLinux -> when (hostDesktopArch) {
         "amd64" -> {
             hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
             hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxAmd64)
@@ -315,7 +323,7 @@ when {
     }
 }
 
-if (currentBuildOs.isLinux) {
+if (desktopTargetOs.isLinux) {
     val buildHevSocks5TunnelLinux = tasks.register<Exec>("buildHevSocks5TunnelLinux") {
         val outputFile = generatedNativeResources.map {
             it.file("native/hev-socks5-tunnel-linux-$hostDesktopArch")
@@ -334,7 +342,7 @@ if (currentBuildOs.isLinux) {
     hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
 }
 
-if (currentBuildOs.isWindows) {
+if (desktopTargetOs.isWindows) {
     val tun2SocksWindowsOutput = generatedNativeResources.map {
         it.file("native/tun2socks-windows-amd64.exe")
     }
@@ -372,17 +380,16 @@ if (currentBuildOs.isWindows) {
 
 fun requiredHostNativeResourcePaths(): List<String> = buildList {
     when {
-        currentBuildOs.isMacOsX -> {
+        desktopTargetOs.isMacOsX -> {
             add("native/olcrtc-darwin-$hostDesktopArch")
             add("native/libolcrtc-darwin-$hostDesktopArch.dylib")
         }
-        currentBuildOs.isWindows -> {
+        desktopTargetOs.isWindows -> {
             add("native/olcrtc-windows-amd64.exe")
-            add("native/olcrtc-windows-amd64.dll")
             add("native/tun2socks-windows-amd64.exe")
             add("native/wintun.dll")
         }
-        currentBuildOs.isLinux -> {
+        desktopTargetOs.isLinux -> {
             add("native/olcrtc-linux-$hostDesktopArch")
             add("native/libolcrtc-linux-$hostDesktopArch.so")
             add("native/hev-socks5-tunnel-linux-$hostDesktopArch")
@@ -408,7 +415,7 @@ sourceSets {
     }
 }
 
-if (currentBuildOs.isWindows) {
+if (desktopTargetOs.isWindows) {
     val jpackageAppRootDir = layout.buildDirectory.dir("compose/binaries/main-release/app")
 
     tasks.register<Zip>("packageReleasePortableZip") {
@@ -490,7 +497,7 @@ compose.desktop {
     }
 }
 
-if (currentBuildOs.isLinux) {
+if (desktopTargetOs.isLinux) {
     val appImageTool = providers.environmentVariable("APPIMAGETOOL").orElse("appimagetool")
     val jpackageAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
     val appDir = layout.buildDirectory.dir("compose/binaries/main-release/appimage/AppDir")

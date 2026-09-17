@@ -578,8 +578,42 @@ data class LocationEntry(
     @SerialName("dns_server")
     val dnsServer: String? = null,
     @SerialName("dnsServer")
-    val legacyDnsServerCamel: String? = null
+    val legacyDnsServerCamel: String? = null,
+    @SerialName("vless")
+    val vless: VlessConfig? = null
 ) {
+    val isVless: Boolean
+        get() = vless != null
+
+    val isComplete: Boolean
+        get() = location.isComplete() || vless?.normalized()?.isComplete() == true
+
+    fun subscriptionSignature(): String {
+        val vlessConfig = vless?.normalized()
+        return if (vlessConfig != null) {
+            listOf(
+                "vless",
+                vlessConfig.server,
+                vlessConfig.port.toString(),
+                vlessConfig.uuid,
+                vlessConfig.security,
+                vlessConfig.network,
+                vlessConfig.sni.orEmpty(),
+                vlessConfig.host.orEmpty(),
+                vlessConfig.path.orEmpty(),
+                vlessConfig.grpcServiceName.orEmpty()
+            ).joinToString("|")
+        } else {
+            val cfg = location.normalized()
+            listOf(
+                cfg.bypassProvider,
+                cfg.transport,
+                cfg.id,
+                cfg.key
+            ).joinToString("|")
+        }
+    }
+
     val location: LocationConfig
         get() {
             val provider = firstNotBlank(
@@ -615,6 +649,19 @@ data class LocationEntry(
         get() = location.bypassProvider
 
     fun normalized(): LocationEntry {
+        if (vless != null) {
+            val vlessConfig = vless.normalized()
+            return LocationEntry(
+                storageId = storageId.trim(),
+                name = firstNotBlank(name, vlessConfig.name, vlessConfig.displayName()),
+                subscriptionUrl = firstNotBlank(subscriptionUrl, legacySubscriptionUrl).ifBlank { null },
+                vless = vlessConfig,
+                metadata = metadata
+                    ?.normalized()
+                    ?.takeUnless { it.isEmpty() }
+            )
+        }
+
         val config = location
         return LocationEntry(
             storageId = storageId.trim(),
@@ -656,6 +703,22 @@ data class LocationEntry(
             ).normalized()
         }
 
+        fun fromVless(
+            storageId: String,
+            vless: VlessConfig,
+            subscriptionUrl: String? = null,
+            metadata: LocationMetadata? = null
+        ): LocationEntry {
+            val config = vless.normalized()
+            return LocationEntry(
+                storageId = storageId,
+                name = firstNotBlank(config.name, config.displayName()),
+                subscriptionUrl = subscriptionUrl,
+                vless = config,
+                metadata = metadata
+            ).normalized()
+        }
+
         private fun firstNotBlank(vararg values: String?): String {
             return values.firstOrNull { !it.isNullOrBlank() } ?: ""
         }
@@ -676,7 +739,7 @@ data class LocationBundleV4(
     fun normalized(): LocationBundleV4 {
         val normalizedLocations = locations
             .map { it.normalized() }
-            .filter { it.storageId.isNotBlank() && it.location.isComplete() }
+            .filter { it.storageId.isNotBlank() && it.isComplete }
             .distinctBy { it.storageId }
 
         val active = activeLocationId

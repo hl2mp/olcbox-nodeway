@@ -18,6 +18,7 @@ import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.importer.ImportLinkInbox
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.VlessConfig
 import org.olcbox.app.data.repository.LocationImportResult
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ui.features.locations.LocationItem
@@ -101,18 +102,30 @@ class HomeScreenViewModel(
         val normalized = active.location
         val locationItem = LocationItem(
             storageId = active.storageId,
-            fullName = normalized.displayName(),
+            fullName = if (active.isVless) {
+                active.vless?.normalized()?.displayName() ?: normalized.displayName()
+            } else {
+                normalized.displayName()
+            },
             config = normalized,
+            vless = active.vless?.normalized(),
+            isVless = active.isVless,
             subscriptionUrl = active.subscriptionUrl,
             metadata = active.metadata
         )
+
+        val isComplete = if (active.isVless) {
+            active.vless?.normalized()?.isComplete() == true
+        } else {
+            normalized.isComplete()
+        }
 
         _state.update {
             it.copy(
                 configData = normalized,
                 selectedLocation = locationItem,
-                canStartVpn = normalized.isComplete(),
-                startBlockedReason = if (normalized.isComplete()) null else "Complete active location first"
+                canStartVpn = isComplete,
+                startBlockedReason = if (isComplete) null else "Complete active location first"
             )
         }
     }
@@ -125,12 +138,14 @@ class HomeScreenViewModel(
         return vpnManager.ping(config)
     }
 
-    suspend fun checkConnectionFor(config: LocationConfig): Long? {
-        return vpnManager.checkConnection(config)
-    }
+    fun getSocksCredentials(): Pair<String, String>? = vpnManager.socksCredentials()
 
-    fun startVpnContinuation() {
-        _state.update { it.copy(isVpnLoading = true) }
+    suspend fun performPingVless(
+        vlessConfig: VlessConfig,
+        socksUsername: String,
+        socksPassword: String
+    ): Long? {
+        return vpnManager.pingVless(vlessConfig, socksUsername, socksPassword)
     }
 
     fun ToggleVpn() {
@@ -153,7 +168,12 @@ class HomeScreenViewModel(
                     vpnManager.stopVpn()
                 } else {
                     val active = locationsRepository.getActiveLocation()
-                    if (active == null || !active.location.isComplete()) {
+                    val isVless = active?.isVless == true
+                    val isOlrComplete = active?.location?.isComplete() == true
+                    val isVlessComplete = active?.vless?.normalized()?.isComplete() == true
+                    val canStart = active != null &&
+                        (if (isVless) isVlessComplete else isOlrComplete)
+                    if (!canStart) {
                         _state.update {
                             it.copy(
                                 isVpnLoading = false,
@@ -178,7 +198,12 @@ class HomeScreenViewModel(
             VpnStatus.Reconnecting -> viewModelScope.launch {
                 _state.update { it.copy(isVpnLoading = true) }
                 val active = locationsRepository.getActiveLocation()
-                if (active == null || !active.location.isComplete()) {
+                val isComplete = if (active?.isVless == true) {
+                    active.vless?.normalized()?.isComplete() == true
+                } else {
+                    active?.location?.isComplete() == true
+                }
+                if (active == null || !isComplete) {
                     vpnManager.stopVpn()
                     loadCurrentConfigNow()
                     _state.update {
@@ -198,9 +223,6 @@ class HomeScreenViewModel(
             VpnStatus.Stopping,
             is VpnStatus.Error -> Unit
         }
-    }
-    private fun updateLocationConfig(block: (LocationConfig) -> LocationConfig) {
-        _state.update { it.copy(configData = block(it.configData)) }
     }
     fun onCopyFullConfigClicked() {
         viewModelScope.launch {

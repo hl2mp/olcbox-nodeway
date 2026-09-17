@@ -126,11 +126,19 @@ fun HomeScreen(
     }
 
     fun refreshHttpPings(targetLocationIds: List<String>? = null) {
+        val creds = viewModel.getSocksCredentials()
+        val socksUser = creds?.first ?: ""
+        val socksPass = creds?.second ?: ""
         locationViewModel.refreshPings(
             targetLocationIds = targetLocationIds,
             performPing = { config ->
                 viewModel.performPingFor(config)
             },
+            performPingVless = { vless, socksUser, socksPass ->
+                viewModel.performPingVless(vless, socksUser, socksPass)
+            },
+            socksUsername = socksUser,
+            socksPassword = socksPass,
         )
     }
 
