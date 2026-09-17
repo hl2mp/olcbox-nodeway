@@ -44,6 +44,10 @@ The author does not support or encourage such use.
 - Diagnostics log view with log export.
 - Android TUN/proxy modes, SOCKS5 credentials, split tunneling.
 - Network migration, reconnect handling, and watchdog recovery.
+- VLESS/Xray protocol support: TCP, WebSocket, gRPC, HTTP/2, QUIC, XHTTP transports.
+- TLS, XTLS, and Reality encryption with SNI, flow, and fingerprint support.
+- VLESS profile connectivity check via local Xray SOCKS5 proxy.
+- SOCKS5 username/password authentication for VLESS inbound.
 
 ## Platform Matrix
 
@@ -51,8 +55,8 @@ Subscriptions can be opened with `olcbox://add?url=<URL-encoded address>`.
 See [deep-link format and integration examples](docs/deep-links.md).
 
 | Platform | Modes | Runtime |
-| --- | --- | --- |
-| Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
+| | --- | --- |
+| Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5, local `libvless` Xray |
 | iOS | Proxy | local `olcrtc` SOCKS5 hosted by a Swift shell |
 | macOS | Proxy | local `olcrtc` SOCKS5 with OS PAC settings |
 | Windows | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, Wintun |
