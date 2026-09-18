@@ -299,7 +299,7 @@ private fun runDesktopApp(args: Array<String>, deepLinks: DesktopDeepLinks) = ap
     )
 
     Window(
-        title = "olcbox",
+        title = "Olcbox Plus",
         visible = isWindowVisible,
         state = rememberWindowState(width = 430.dp, height = 780.dp),
         onCloseRequest = {
