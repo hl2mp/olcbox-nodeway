@@ -13,11 +13,10 @@ import kotlin.test.assertTrue
 class AppUpdateServiceTest {
     @Test
     fun stableVersionComparisonUsesSemverParts() {
-        assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Stable, "v1.2.0", "1.1.9"))
-        assertFalse(AppUpdateService.isUpdateAvailable(ReleaseChannel.Stable, "v1.0.0", "1.0.0"))
-        assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "nightly", "9.9.9"))
-        assertTrue(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "1.0.2", "1.0.1"))
-        assertFalse(AppUpdateService.isUpdateAvailable(ReleaseChannel.Nightly, "1.0.2", "1.0.2"))
+        assertTrue(AppUpdateService.isUpdateAvailable("v1.2.0", "1.1.9"))
+        assertFalse(AppUpdateService.isUpdateAvailable("v1.0.0", "1.0.0"))
+        assertFalse(AppUpdateService.isUpdateAvailable("1.0.2", "1.0.3"))
+        assertTrue(AppUpdateService.isUpdateAvailable("1.0.2", "1.0.1"))
     }
 
     @Test
@@ -28,12 +27,12 @@ class AppUpdateServiceTest {
     }
 
     @Test
-    fun nightlyUsesVersionFromAssetNameWhenAvailable() = runTest {
+    fun checkFindsLatestStableRelease() = runTest {
         val engine = MockEngine {
             respond(
                 """
                 {
-                  "tag_name": "nightly",
+                  "tag_name": "v1.0.42",
                   "html_url": "https://example/release",
                   "published_at": "2026-05-13T12:00:00Z",
                   "assets": [
@@ -55,9 +54,10 @@ class AppUpdateServiceTest {
             platform = UpdatePlatform("android", "arm64")
         )
 
-        val info = service.check(ReleaseChannel.Nightly).getOrThrow()
+        val info = service.check().getOrThrow()
 
         assertEquals("1.0.42", info.version)
+        assertEquals(ReleaseChannel.Stable, info.channel)
         assertFalse(info.isUpdateAvailable)
     }
 
@@ -77,10 +77,10 @@ class AppUpdateServiceTest {
     }
 
     @Test
-    fun selectsNightlyAndroidApk() {
+    fun selectsAndroidApk() {
         val selected = AppUpdateService.selectAsset(
             assets = listOf(
-                GithubReleaseAsset("olcbox-nightly-android-arm64.apk", "https://example/app.apk")
+                GithubReleaseAsset("olcbox-android-arm64.apk", "https://example/app.apk")
             ),
             platform = UpdatePlatform("android", "arm64")
         )
@@ -117,10 +117,10 @@ class AppUpdateServiceTest {
     @Test
     fun updateSettingsPersistAndDueCheckUsesInterval() {
         val settings = AppUpdateSettings(
-            channel = ReleaseChannel.Nightly,
+            channel = ReleaseChannel.Stable,
             intervalHours = 6,
             lastCheckAtEpochMs = 1_000L,
-            lastSeenUpdateVersion = "Nightly:nightly:apk"
+            lastSeenUpdateVersion = "Stable:1.0.0:apk"
         )
         val store = InMemoryAppUpdateSettingsStore()
 
@@ -137,15 +137,15 @@ class AppUpdateServiceTest {
     fun laterSuppressesSameUpdateUntilNextIntervalOrNewVersion() {
         val asset = AppUpdateAsset("olcbox-android.apk", "https://example/app.apk", 100)
         val info = AppUpdateInfo(
-            channel = ReleaseChannel.Nightly,
-            version = "nightly",
+            channel = ReleaseChannel.Stable,
+            version = "1.0.0",
             htmlUrl = "https://example/release",
             publishedAt = null,
             asset = asset,
             isUpdateAvailable = true
         )
         val settings = AppUpdateSettings(
-            channel = ReleaseChannel.Nightly,
+            channel = ReleaseChannel.Stable,
             intervalHours = 6,
             lastCheckAtEpochMs = 10_000L,
             lastSeenUpdateVersion = info.identity()
@@ -159,21 +159,21 @@ class AppUpdateServiceTest {
     @Test
     fun downloadedUpdateDoesNotShowOfferAgain() {
         val asset = AppUpdateAsset(
-            name = "olcbox-nightly-android.apk",
+            name = "olcbox-android.apk",
             downloadUrl = "https://example/app.apk",
             sizeBytes = 100,
             updatedAt = "2026-05-13T10:00:00Z"
         )
         val info = AppUpdateInfo(
-            channel = ReleaseChannel.Nightly,
-            version = "nightly",
+            channel = ReleaseChannel.Stable,
+            version = "1.0.0",
             htmlUrl = "https://example/release",
             publishedAt = "2026-05-13T10:01:00Z",
             asset = asset,
             isUpdateAvailable = true
         )
         val settings = AppUpdateSettings(
-            channel = ReleaseChannel.Nightly,
+            channel = ReleaseChannel.Stable,
             intervalHours = 1,
             lastCheckAtEpochMs = 10_000L,
             lastSeenUpdateVersion = info.identity(),

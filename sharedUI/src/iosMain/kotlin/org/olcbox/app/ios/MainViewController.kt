@@ -140,8 +140,8 @@ private fun IosApp(
             val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
 
-            updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
-            val result = dependencies.updateService.check(previousSettings.channel)
+            updateStatusText = "Checking..."
+            val result = dependencies.updateService.check()
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
             saveUpdateSettings(checkedSettings)

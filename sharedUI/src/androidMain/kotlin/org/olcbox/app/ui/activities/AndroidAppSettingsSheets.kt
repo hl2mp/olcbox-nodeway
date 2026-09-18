@@ -411,7 +411,7 @@ private fun AppSettingsHubContent(
 
         SettingsNavigationRow(
             title = "Update Settings",
-            value = "Nightly · every ${updateSettings.intervalHours}h",
+            value = "Stable · every ${updateSettings.intervalHours}h",
             icon = Icons.Outlined.Refresh,
             enabled = true,
             onClick = onUpdatesClick

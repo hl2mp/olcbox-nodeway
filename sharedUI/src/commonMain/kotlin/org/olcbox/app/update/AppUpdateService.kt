@@ -16,8 +16,7 @@ import org.olcbox.app.data.repository.SubscriptionFetchProxy
 
 @Serializable
 enum class ReleaseChannel {
-    Stable,
-    Nightly
+    Stable
 }
 
 data class ReleaseMirror(
@@ -32,7 +31,7 @@ data class ReleaseMirror(
     companion object {
         val GitHub = ReleaseMirror(
             name = "GitHub",
-            repositoryUrl = "https://github.com/hl2mp/olcbox-nodeway"
+            repositoryUrl = "https://github.com/hl2mp/olcbox-plus"
         )
     }
 }
@@ -61,10 +60,9 @@ class AppUpdateService(
     private val platform: UpdatePlatform = UpdatePlatform.current()
 ) {
     suspend fun check(
-        channel: ReleaseChannel,
         proxy: SubscriptionFetchProxy? = null
     ): Result<AppUpdateInfo> = runCatching {
-        val release = fetchRelease(channel, proxy)
+        val release = fetchRelease(proxy)
         val asset = selectAsset(release.assets, platform)
             ?: error(
                 "No ${platform.assetToken.joinToString(" + ")} update asset in ${release.tagName}. " +
@@ -75,21 +73,19 @@ class AppUpdateService(
             )
 
         AppUpdateInfo(
-            channel = channel,
-            version = updateVersion(channel, release.tagName, asset),
+            channel = ReleaseChannel.Stable,
+            version = updateVersion(release.tagName, asset),
             htmlUrl = release.htmlUrl,
             publishedAt = release.publishedAt,
             asset = asset,
             isUpdateAvailable = isUpdateAvailable(
-                channel = channel,
-                releaseTag = updateVersion(channel, release.tagName, asset),
+                releaseTag = updateVersion(release.tagName, asset),
                 currentVersion = currentVersion
             )
         )
     }
 
     suspend fun fetchRelease(
-        channel: ReleaseChannel,
         proxy: SubscriptionFetchProxy? = null
     ): GithubRelease {
         val client = if (proxy == null) {
@@ -100,7 +96,7 @@ class AppUpdateService(
 
         return try {
             withProxyAuthentication(proxy) {
-                fetchRelease(client, channel)
+                fetchRelease(client)
             }
         } finally {
             if (client !== httpClient) {
@@ -109,11 +105,8 @@ class AppUpdateService(
         }
     }
 
-    private suspend fun fetchRelease(client: HttpClient, channel: ReleaseChannel): GithubRelease {
-        val endpoint = when (channel) {
-            ReleaseChannel.Stable -> "https://api.github.com/repos/${mirror.ownerRepo}/releases/latest"
-            ReleaseChannel.Nightly -> "https://api.github.com/repos/${mirror.ownerRepo}/releases/tags/nightly"
-        }
+    private suspend fun fetchRelease(client: HttpClient): GithubRelease {
+        val endpoint = "https://api.github.com/repos/${mirror.ownerRepo}/releases/latest"
 
         val hwid = deviceIdentityProvider.hwid()
         val response = client.get(endpoint) {
@@ -191,12 +184,10 @@ class AppUpdateService(
         }
 
         fun isUpdateAvailable(
-            channel: ReleaseChannel,
             releaseTag: String,
             currentVersion: String
         ): Boolean {
             val release = releaseTag.removePrefix("v")
-            if (channel == ReleaseChannel.Nightly && release == "nightly") return true
 
             return compareVersions(release, currentVersion) > 0
         }
@@ -212,24 +203,13 @@ class AppUpdateService(
             return 0
         }
 
-        private fun updateVersion(
-            channel: ReleaseChannel,
-            releaseTag: String,
-            asset: AppUpdateAsset
-        ): String {
-            return when (channel) {
-                ReleaseChannel.Stable -> releaseTag.removePrefix("v")
-                ReleaseChannel.Nightly -> asset.name.versionToken() ?: releaseTag.removePrefix("v")
-            }
-        }
-
-        private fun String.versionToken(): String? {
-            return Regex("""(?:^|[-_])v?(\d+\.\d+\.\d+)(?:[-_.]|$)""")
-                .find(this)
-                ?.groupValues
-                ?.getOrNull(1)
-        }
+private fun updateVersion(
+        releaseTag: String,
+        asset: AppUpdateAsset
+    ): String {
+        return releaseTag.removePrefix("v")
     }
+}
 }
 
 data class UpdatePlatform(
