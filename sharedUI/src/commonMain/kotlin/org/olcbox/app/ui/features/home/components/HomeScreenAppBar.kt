@@ -29,14 +29,9 @@ fun HomeScreenAppBar(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "olcbox",
+                    text = "Olcbox Plus",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "multiplatform olcrtc configurator",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
