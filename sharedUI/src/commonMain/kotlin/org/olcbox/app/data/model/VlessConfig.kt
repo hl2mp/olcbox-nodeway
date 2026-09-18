@@ -50,7 +50,13 @@ data class VlessConfig(
     @SerialName("kcpSeed")
     val kcpSeed: String? = null,
     @SerialName("wsHeaders")
-    val wsHeaders: Map<String, String> = emptyMap()
+    val wsHeaders: Map<String, String> = emptyMap(),
+    @SerialName("mode")
+    val mode: String? = null,
+    @SerialName("encryption")
+    val encryption: String? = null,
+    @SerialName("rawLink")
+    val rawLink: String? = null
 ) {
     fun normalized(): VlessConfig {
         val normalizedServer = server.trim().removeSurrounding("[", "]")
@@ -75,7 +81,10 @@ data class VlessConfig(
             kcpHeaderType = kcpHeaderType?.trim()?.takeIf { it.isNotEmpty() },
             kcpSeed = kcpSeed?.trim()?.takeIf { it.isNotEmpty() },
             flow = flow?.trim()?.takeIf { it.isNotEmpty() },
-            fingerprint = fingerprint?.trim()?.takeIf { it.isNotEmpty() }
+            fingerprint = fingerprint?.trim()?.takeIf { it.isNotEmpty() },
+            mode = mode?.trim()?.takeIf { it.isNotEmpty() },
+            encryption = encryption?.trim()?.takeIf { it.isNotEmpty() },
+            rawLink = rawLink?.trim()?.takeIf { it.isNotEmpty() }
         )
     }
 
@@ -105,6 +114,24 @@ data class VlessConfig(
     override fun toString(): String = "VlessConfig(server=$server, port=$port, uuid=${uuid.take(8)}..., network=$network, security=$security, sni=$sni)"
 
     fun toUri(resolvedIp: String? = null): String {
+        rawLink?.let { raw ->
+            if (resolvedIp != null && resolvedIp.isNotBlank()) {
+                val endpoint = if (resolvedIp.contains(':') && !resolvedIp.startsWith("[")) {
+                    "[$resolvedIp]:$port"
+                } else {
+                    "$resolvedIp:$port"
+                }
+                val prefix = "$PREFIX$uuid@"
+                if (raw.startsWith(prefix, ignoreCase = true)) {
+                    val rest = raw.substring(prefix.length)
+                    val slashIdx = rest.indexOf('/')
+                    val qIdx = rest.indexOf('?')
+                    val cut = listOf(slashIdx, qIdx).filter { it >= 0 }.minOrNull() ?: rest.length
+                    return prefix + endpoint + rest.substring(cut)
+                }
+            }
+            return raw
+        }
         val resolvedServer = resolvedIp?.takeIf { it.isNotBlank() } ?: server
         val endpoint = if (resolvedServer.contains(':') && !resolvedServer.startsWith("[")) {
             "[$resolvedServer]:$port"
@@ -127,7 +154,10 @@ data class VlessConfig(
         add(flow, "flow")
         add(fingerprint, "fp")
         add(realityPublicKey, "pbk")
-        add(realityShortId, "pbn")
+        add(realityShortId, "sid")
+        add(realityPackageName, "spx")
+        add(mode, "mode")
+        add(encryption, "encryption")
         val query = if (params.isEmpty()) "" else "?" + params.joinToString("&")
         val fragment = if (name.isNotBlank()) "#${encodeUriFragment(name)}" else ""
         return "$PREFIX$uuid@$endpoint$query$fragment"

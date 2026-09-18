@@ -278,6 +278,24 @@ private fun VlessEditorForm(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
         )
 
+        SettingsDropdown(
+            label = "Network",
+            selectedValue = vless.network,
+            options = VlessConfig.supportedNetworks,
+            enabled = !isSaving,
+            onValueSelected = viewModel::onVlessNetworkChanged,
+            valueLabel = { it }
+        )
+
+        SettingsDropdown(
+            label = "Encryption / TLS",
+            selectedValue = vless.security,
+            options = VlessConfig.supportedSecurity,
+            enabled = !isSaving,
+            onValueSelected = viewModel::onVlessSecurityChanged,
+            valueLabel = { it }
+        )
+
         if (vless.security != VlessConfig.SECURITY_NONE) {
             SettingsTextField(
                 value = vless.flow ?: "",
@@ -304,27 +322,79 @@ private fun VlessEditorForm(
                 onClear = { viewModel.onVlessFingerprintChanged("") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
-        }
 
-        SettingsDropdown(
-            label = "Network",
-            selectedValue = vless.network,
-            options = VlessConfig.supportedNetworks,
-            enabled = !isSaving,
-            onValueSelected = viewModel::onVlessNetworkChanged,
-            valueLabel = { it }
-        )
+            if (vless.security == VlessConfig.SECURITY_REALITY) {
+                SettingsTextField(
+                    value = vless.realityPublicKey ?: "",
+                    onValueChange = { viewModel.onVlessRealityPublicKeyChanged(it) },
+                    label = "Reality Public Key (pbk)",
+                    placeholder = "Reality public key",
+                    enabled = !isSaving,
+                    isError = false,
+                    supportingText = null,
+                    leadingIcon = Icons.Rounded.Key,
+                    onClear = { viewModel.onVlessRealityPublicKeyChanged("") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
 
-        SettingsDropdown(
-            label = "Encryption / TLS",
-            selectedValue = vless.security,
-            options = VlessConfig.supportedSecurity,
-            enabled = !isSaving,
-            onValueSelected = viewModel::onVlessSecurityChanged,
-            valueLabel = { it }
-        )
+                SettingsTextField(
+                    value = vless.realityShortId ?: "",
+                    onValueChange = { viewModel.onVlessRealityShortIdChanged(it) },
+                    label = "Reality Short ID (sid)",
+                    placeholder = "Reality short ID (optional)",
+                    enabled = !isSaving,
+                    isError = false,
+                    supportingText = null,
+                    leadingIcon = Icons.Rounded.Key,
+                    onClear = { viewModel.onVlessRealityShortIdChanged("") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
 
-        if (vless.security != VlessConfig.SECURITY_NONE) {
+                SettingsTextField(
+                    value = vless.realityPackageName ?: "",
+                    onValueChange = { viewModel.onVlessRealityPackageNameChanged(it) },
+                    label = "Reality SpiderX (spx)",
+                    placeholder = "SpiderX path (optional)",
+                    enabled = !isSaving,
+                    isError = false,
+                    supportingText = null,
+                    leadingIcon = Icons.Rounded.Public,
+                    onClear = { viewModel.onVlessRealityPackageNameChanged("") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
+            }
+
+            if (vless.network == VlessConfig.NETWORK_XHTTP ||
+                vless.network == VlessConfig.NETWORK_HTTP2 ||
+                vless.network == VlessConfig.NETWORK_HTTP
+            ) {
+                SettingsTextField(
+                    value = vless.mode ?: "",
+                    onValueChange = { viewModel.onVlessModeChanged(it) },
+                    label = "Mode",
+                    placeholder = "stream-one, stream-multi, auto (optional)",
+                    enabled = !isSaving,
+                    isError = false,
+                    supportingText = null,
+                    leadingIcon = Icons.Rounded.Public,
+                    onClear = { viewModel.onVlessModeChanged("") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
+            }
+
+            SettingsTextField(
+                value = vless.encryption ?: "",
+                onValueChange = { viewModel.onVlessEncryptionChanged(it) },
+                label = "Encryption",
+                    placeholder = "none (default)",
+                    enabled = !isSaving,
+                    isError = false,
+                    supportingText = null,
+                    leadingIcon = Icons.Rounded.Key,
+                    onClear = { viewModel.onVlessEncryptionChanged("") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                )
+
             SettingsTextField(
                 value = vless.sni ?: "",
                 onValueChange = { viewModel.onVlessSniChanged(it) },

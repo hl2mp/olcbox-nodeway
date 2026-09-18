@@ -25,16 +25,23 @@ val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
     .map { it.toInt() }
     .orElse(1)
 val defaultAndroidAbiFilters = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
-    .map { value ->
-        value.split(',')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-    }
-    .getOrElse(defaultAndroidAbiFilters)
+
+// Support: -Pabi=arm64-v8a  (single ABI) or -Pabi=arm64-v8a,x86_64  (comma-separated)
+// Falls back to olcbox.android.abiFilters gradle property, then defaults to all ABIs.
+val abiProperty: String? = (project.findProperty("abi") as? String)
+    ?: (project.findProperty("olcbox.abi") as? String)
+
+val androidAbiFilters: List<String> = abiProperty?.split(',')
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?: (project.findProperty("olcbox.android.abiFilters") as? String)
+        ?.split(',')
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?: defaultAndroidAbiFilters
 
 require(androidAbiFilters.isNotEmpty()) {
-    "olcbox.android.abiFilters must contain at least one Android ABI"
+    "abi or olcbox.android.abiFilters must contain at least one Android ABI"
 }
 
 android {

@@ -29,7 +29,7 @@ object VlessUri {
         if (host.isBlank()) return null
 
         val params = parseQuery(query)
-        val config = buildConfig(uuid, host, port, fragment, params)
+        val config = buildConfig(uuid, host, port, fragment, params, trimmed)
         config.normalized().takeIf { it.isComplete() }
     }.getOrNull()
 
@@ -90,7 +90,8 @@ object VlessUri {
         host: String,
         port: Int,
         name: String,
-        params: Map<String, String>
+        params: Map<String, String>,
+        rawLink: String? = null
     ): VlessConfig {
         val network = params["type"] ?: params["network"] ?: VlessConfig.NETWORK_TCP
         val securityParam = params["security"] ?: params["tls"] ?: VlessConfig.SECURITY_NONE
@@ -114,12 +115,15 @@ object VlessUri {
             flow = params["flow"]?.takeIf { it.isNotEmpty() },
             fingerprint = params["fp"] ?: params["fingerprint"],
             realityPublicKey = params["pbk"] ?: params["publickey"] ?: params["realitypublickey"],
-            realityShortId = params["pbn"] ?: params["shortid"] ?: params["realityshortid"],
-            realityPackageName = params["packagename"] ?: params["package_name"],
+            realityShortId = params["pbn"] ?: params["shortid"] ?: params["realityshortid"] ?: params["sid"],
+            realityPackageName = params["packagename"] ?: params["package_name"] ?: params["spx"],
             quicSecurity = params["quic"],
             kcpHeaderType = params["headertype"] ?: params["header_type"],
             kcpSeed = params["seed"],
-            wsHeaders = parseHeaders(params["headers"] ?: params["head"] ?: params["wsheaders"] ?: "")
+            wsHeaders = parseHeaders(params["headers"] ?: params["head"] ?: params["wsheaders"] ?: ""),
+            mode = params["mode"],
+            encryption = params["encryption"],
+            rawLink = rawLink
         )
     }
 

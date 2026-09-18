@@ -131,11 +131,13 @@ internal object XrayConnectionChecker {
         localAddress: String? = null
     ): Process? {
         return try {
+            // NOTE: The new libvless.so (built from vless-client) requires -listen
+            // BEFORE -link. Old binary accepted any order.
             val cmd = buildList {
-                add("-link")
-                add(vlessLink)
                 add("-listen")
                 add("127.0.0.1:$port")
+                add("-link")
+                add(vlessLink)
                 if (socksUsername.isNotBlank()) {
                     add("-proxy-user")
                     add(socksUsername)

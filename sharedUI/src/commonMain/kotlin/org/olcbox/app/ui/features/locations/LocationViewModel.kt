@@ -513,6 +513,26 @@ class LocationViewModel(
         editingVless = editingVless.copy(fingerprint = value.takeIf { it.isNotBlank() })
     }
 
+    fun onVlessRealityPublicKeyChanged(value: String) {
+        editingVless = editingVless.copy(realityPublicKey = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessRealityShortIdChanged(value: String) {
+        editingVless = editingVless.copy(realityShortId = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessRealityPackageNameChanged(value: String) {
+        editingVless = editingVless.copy(realityPackageName = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessModeChanged(value: String) {
+        editingVless = editingVless.copy(mode = value.takeIf { it.isNotBlank() })
+    }
+
+    fun onVlessEncryptionChanged(value: String) {
+        editingVless = editingVless.copy(encryption = value.takeIf { it.isNotBlank() })
+    }
+
     fun onNameChanged(value: String) {
         editingName = value
         validateName(value)
