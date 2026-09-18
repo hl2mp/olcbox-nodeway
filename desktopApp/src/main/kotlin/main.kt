@@ -194,8 +194,8 @@ private fun runDesktopApp(args: Array<String>, deepLinks: DesktopDeepLinks) = ap
             val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
 
-            updateMessage = "Checking ${previousSettings.channel.name.lowercase()}..."
-            val result = dependencies.updateService.check(previousSettings.channel)
+            updateMessage = "Checking..."
+            val result = dependencies.updateService.check()
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
             saveUpdateSettings(checkedSettings)
@@ -210,7 +210,7 @@ private fun runDesktopApp(args: Array<String>, deepLinks: DesktopDeepLinks) = ap
                             updateMessage = "${info.channel.name} update found: ${info.version}"
                         } else {
                             updateOffer = null
-                            updateMessage = "Olcbox is up to date"
+                            updateMessage = "Olcbox+ is up to date"
                         }
                     } else {
                         updateOffer = null
@@ -276,7 +276,7 @@ private fun runDesktopApp(args: Array<String>, deepLinks: DesktopDeepLinks) = ap
     Tray(
         state = trayState,
         icon = painterResource("LinuxIcon.png"),
-        tooltip = "Olcbox",
+        tooltip = "Olcbox+",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })
             Item(

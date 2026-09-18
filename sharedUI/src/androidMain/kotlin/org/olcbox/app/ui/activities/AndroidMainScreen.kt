@@ -183,7 +183,6 @@ fun AndroidMainScreen(
 
             updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
             val result = service.check(
-                previousSettings.channel,
                 vpnManager.subscriptionFetchProxy()
             )
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
